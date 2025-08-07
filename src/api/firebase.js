@@ -6,12 +6,12 @@ import { getFirestore } from 'firebase/firestore';
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
     ? JSON.parse(__firebase_config)
     : {
-        apiKey: "YOUR_API_KEY",
-        authDomain: "YOUR_AUTH_DOMAIN",
-        projectId: "YOUR_PROJECT_ID",
-        storageBucket: "YOUR_STORAGE_BUCKET",
-        messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-        appId: "YOUR_APP_ID"
+        apiKey: "AIzaSyB59jgrSOfRf0D09D5TH-ivZXUGPbEQsRU",
+        authDomain: "pg-bma.firebaseapp.com",
+        projectId: "pg-bma",
+        storageBucket: "pg-bma.firebasestorage.app",
+        messagingSenderId: "363463917163",
+        appId: "1:363463917163:web:c76de01c71fda0f986bb2e"
     };
 
 const app = initializeApp(firebaseConfig);
