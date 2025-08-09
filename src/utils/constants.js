@@ -2,7 +2,7 @@
 import {
     LayoutDashboard, BarChart2, Factory, Truck, ShoppingCart, Users, Settings,
     FileText, DollarSign, Banknote, TrendingUp, FilePlus, ClipboardCheck,
-    Landmark, History, PackageCheck, UserCheck, ShieldCheck, Bug
+    Landmark, History, PackageCheck, UserCheck, ShieldCheck, Bug, ScrollText
 } from 'lucide-react';
 
 export const USER_ROLES = {
@@ -36,6 +36,7 @@ export const NAV_ITEMS = [
     { id: 'SalesAnalytics', icon: BarChart2, label: 'Sales Analytics', module: 'Sales', roles: [USER_ROLES.ADMIN, USER_ROLES.FINANCE_LEAD, USER_ROLES.MANAGER] },
     { id: 'CustomerHub', icon: UserCheck, label: 'Customer Hub', module: 'Sales', roles: [USER_ROLES.ADMIN, USER_ROLES.MANAGER] },
     // CORRECTED: The ID for the POS screen is 'DailyLog'
+    { id: 'TransactionHistory', icon: ScrollText, label: 'Transaction History', module: 'Data Entry', roles: [USER_ROLES.ADMIN, USER_ROLES.FINANCE_LEAD, USER_ROLES.MANAGER] },
     { id: 'DailyLog', icon: FilePlus, label: 'Daily Transaction Log (POS)', module: 'Data Entry', roles: [USER_ROLES.ADMIN, USER_ROLES.CASHIER] },
     { id: 'ApprovalQueue', icon: ClipboardCheck, label: 'Approval Queue', module: 'Data Entry', roles: [USER_ROLES.ADMIN, USER_ROLES.MANAGER] },
     { id: 'UserManagement', icon: Users, label: 'User Management', module: 'Admin', roles: [USER_ROLES.ADMIN] },

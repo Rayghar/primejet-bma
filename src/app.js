@@ -31,6 +31,7 @@ import Configuration from './views/05-Admin/Configuration';
 import DataMigration from './views/05-Admin/DataMigration';
 import AuditLog from './views/05-Admin/AuditLog';
 import AppLogViewer from './views/05-Admin/AppLogViewer';
+import TransactionHistory from './views/04-DataEntry/TransactionHistory';
 import RevenueAssurance from './views/01-Finance/RevenueAssurance';
 
 
@@ -71,6 +72,7 @@ const AppContent = () => {
             Configuration,
             DataMigration,
             AuditLog,
+            TransactionHistory, // Added TransactionHistory
             AppLogViewer,
         };
         

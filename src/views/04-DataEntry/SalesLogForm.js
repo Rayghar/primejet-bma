@@ -4,10 +4,16 @@ import { addDataEntry } from '../../api/firestoreService';
 import { generateRawBtReceipt, createRawBtLink } from '../../utils/rawbt';
 import Button from '../../components/shared/Button';
 import { Send } from 'lucide-react';
-import Modal from '../../components/shared/Modal';
+// The Modal component import is removed as the form is now embedded directly
 
-export default function SalesLogForm({ user, plants, onSuccess, onError, onClose }) {
-    const initialState = { kgSold: '', revenue: '', paymentMethod: 'Cash', branchId: plants[0]?.id || '', date: new Date().toISOString().split('T')[0] };
+export default function SalesLogForm({ user, plants, onSuccess, onError, dailySummaryId }) {
+    const initialState = { 
+        kgSold: '', 
+        revenue: '', 
+        paymentMethod: 'Cash', 
+        branchId: plants[0]?.id || '', 
+        date: new Date().toISOString().split('T')[0] 
+    };
     const [formData, setFormData] = useState(initialState);
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -17,7 +23,7 @@ export default function SalesLogForm({ user, plants, onSuccess, onError, onClose
         e.preventDefault();
         setIsSubmitting(true);
         try {
-            await addDataEntry(formData, user, 'sale');
+            await addDataEntry({ ...formData, dailySummaryId }, user, 'sale');
             onSuccess('Sales log submitted for approval!');
 
             const receiptData = {
@@ -32,7 +38,7 @@ export default function SalesLogForm({ user, plants, onSuccess, onError, onClose
             
             window.open(printLink, '_blank');
 
-            onClose();
+            setFormData(initialState); // Reset form after successful submission
         } catch (error) {
             onError(error.message || 'Failed to submit sales log.');
         } finally {
@@ -41,26 +47,35 @@ export default function SalesLogForm({ user, plants, onSuccess, onError, onClose
     };
     
     return (
-        <Modal title="Log Customer Sale" onClose={onClose}>
-            <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                    <label className="block text-sm font-medium">Branch</label>
-                    <select name="branchId" value={formData.branchId} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md bg-white">
-                        {plants.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
-                    </select>
-                </div>
-                <div><label className="block text-sm font-medium">KG Sold</label><input type="number" name="kgSold" value={formData.kgSold} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required/></div>
-                <div><label className="block text-sm font-medium">Total Revenue (₦)</label><input type="number" name="revenue" value={formData.revenue} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required/></div>
-                <div>
-                    <label className="block text-sm font-medium">Payment Method</label>
-                    <select name="paymentMethod" value={formData.paymentMethod} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md bg-white">
-                        <option>Cash</option>
-                        <option>POS</option>
-                        <option>Transfer</option>
-                    </select>
-                </div>
-                <div className="flex justify-end pt-2"><Button type="submit" disabled={isSubmitting} icon={Send}>{isSubmitting ? 'Submitting...' : 'Log & Print Receipt'}</Button></div>
-            </form>
-        </Modal>
+        <form onSubmit={handleSubmit} className="space-y-4 p-4 border rounded-lg bg-white">
+            <h3 className="font-semibold text-gray-700">Log Customer Sale</h3>
+            <div>
+                <label className="block text-sm font-medium">Branch</label>
+                <select name="branchId" value={formData.branchId} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md bg-white">
+                    {plants.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </select>
+            </div>
+            <div>
+                <label className="block text-sm font-medium">KG Sold</label>
+                <input type="number" name="kgSold" value={formData.kgSold} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required/>
+            </div>
+            <div>
+                <label className="block text-sm font-medium">Total Revenue (₦)</label>
+                <input type="number" name="revenue" value={formData.revenue} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required/>
+            </div>
+            <div>
+                <label className="block text-sm font-medium">Payment Method</label>
+                <select name="paymentMethod" value={formData.paymentMethod} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md bg-white">
+                    <option>Cash</option>
+                    <option>POS</option>
+                    <option>Transfer</option>
+                </select>
+            </div>
+            <div className="flex justify-end pt-2">
+                <Button type="submit" disabled={isSubmitting} icon={Send}>
+                    {isSubmitting ? 'Submitting...' : 'Log & Print Receipt'}
+                </Button>
+            </div>
+        </form>
     );
-};
+}

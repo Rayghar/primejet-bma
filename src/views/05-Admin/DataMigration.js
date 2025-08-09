@@ -30,32 +30,69 @@ const BulkUpload = ({ user, plants, onSuccess, onError }) => {
             complete: async (results) => {
                 try {
                     const records = results.data;
-                    logAppEvent('INFO', `DataMigration: Parsed ${records.length} records from CSV.`, { recordCount: records.length });
+                    logAppEvent('INFO', `DataMigration: Parsed ${records.length} daily summary records from CSV.`, { recordCount: records.length });
                     const batch = [];
+                    
+                    // --- Loop through each record and process it ---
                     for (const record of records) {
-                        if (!record.date || !record.kgSold || !record.amountPaid || !record.branchName) {
-                            logAppEvent('WARN', 'DataMigration: Skipping invalid record in CSV.', { record });
+                        // Skip records that are completely empty
+                        if (Object.values(record).every(value => !value)) {
+                            logAppEvent('WARN', 'DataMigration: Skipping a completely empty row in CSV.');
                             continue;
                         }
-                        const plant = plants.find(p => p.name.toLowerCase() === record.branchName.toLowerCase());
+
+                        const plant = plants.find(p => p.name?.toLowerCase() === record.branchName?.toLowerCase());
                         if (!plant) {
                             logAppEvent('WARN', `DataMigration: Skipping record with unknown branch: "${record.branchName}"`, { record });
                             continue;
                         }
-                        batch.push(addHistoricalEntry({ ...record, branchId: plant.id }, user));
+
+                        const summaryDate = new Date(record.date);
+                        if (isNaN(summaryDate.getTime())) {
+                            logAppEvent('ERROR', `DataMigration: Skipping record with invalid date format: "${record.date}"`, { record });
+                            continue;
+                        }
+
+                        const summaryData = {
+                            date: summaryDate,
+                            branchId: plant.id,
+                            cashierName: record.cashierName || user.email,
+                            openingMeterA: parseFloat(record.openingMeterA) || 0,
+                            closingMeterA: parseFloat(record.closingMeterA) || 0,
+                            openingMeterB: parseFloat(record.openingMeterB) || 0,
+                            closingMeterB: parseFloat(record.closingMeterB) || 0,
+                            pricePerKg: parseFloat(record.pricePerKg) || 0,
+                            posAmount: parseFloat(record.posAmount) || 0,
+                            cashAmount: parseFloat(record.cashAmount) || 0,
+                            expenses: [],
+                            status: 'approved',
+                        };
+
+                        if (record.expenseDescription && record.expenseAmount) {
+                            summaryData.expenses.push({
+                                description: record.expenseDescription,
+                                amount: parseFloat(record.expenseAmount) || 0,
+                                category: record.expenseCategory || 'Other',
+                                date: summaryDate,
+                            });
+                        }
+                        
+                        batch.push(addDailySummary(summaryData, user));
                     }
+                    
+                    // --- Process the valid records in a single batch ---
                     await Promise.all(batch);
-                    onSuccess(`${batch.length} historical records uploaded successfully!`);
+                    onSuccess(`${batch.length} historical daily summaries uploaded successfully!`);
                 } catch (error) {
                     logAppEvent('ERROR', 'DataMigration: Bulk upload failed.', { error: error.message });
-                    onError("An error occurred during the bulk upload.");
+                    onError(`An error occurred during the bulk upload: ${error.message}`);
                 } finally {
                     setIsUploading(false);
                 }
             },
             error: (error) => {
                 logAppEvent('ERROR', 'DataMigration: CSV parsing failed.', { error: error.message });
-                onError("Failed to parse CSV file.");
+                onError("Failed to parse CSV file. Please check its format.");
                 setIsUploading(false);
             }
         });
@@ -64,7 +101,9 @@ const BulkUpload = ({ user, plants, onSuccess, onError }) => {
     return (
         <div>
             <h3 className="text-lg font-semibold text-gray-700 mb-2">Bulk Upload from CSV</h3>
-            <p className="text-sm text-gray-500 mb-4">Upload a CSV of individual sales with headers: `date`, `kgSold`, `amountPaid`, `branchName`, etc.</p>
+            <p className="text-sm text-gray-500 mb-4">
+                Upload a CSV of daily summaries with headers: `date`, `branchName`, `cashierName`, `openingMeterA`, `closingMeterA`, `openingMeterB`, `closingMeterB`, `pricePerKg`, `posAmount`, `cashAmount`, `expenseDescription`, `expenseCategory`, and `expenseAmount`.
+            </p>
             <label htmlFor="csv-upload" className="w-full inline-block cursor-pointer">
                 <div className="flex items-center justify-center font-bold py-2 px-4 rounded-lg transition-colors duration-200 bg-gray-200 text-gray-800 hover:bg-gray-300">
                     <FileUp size={20} className="mr-2" />
@@ -75,6 +114,7 @@ const BulkUpload = ({ user, plants, onSuccess, onError }) => {
         </div>
     );
 };
+
 
 // --- End-of-Day Summary Form Component ---
 const EndOfDaySummaryForm = ({ user, plants, plantsLoading, onSuccess, onError }) => {

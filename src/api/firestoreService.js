@@ -1,7 +1,7 @@
 // src/api/firestoreService.js
 import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import {
-    collection, query, where, doc, addDoc, updateDoc, serverTimestamp, setDoc, getDoc, orderBy, getDocs, writeBatch, Timestamp, deleteDoc, runTransaction, limit
+    collection, query, where, doc, addDoc, updateDoc, serverTimestamp, setDoc, getDoc, orderBy, getDocs, writeBatch, Timestamp, deleteDoc, runTransaction, limit, startAfter
 } from 'firebase/firestore';
 import { auth, db, appId } from './firebase';
 
@@ -58,23 +58,90 @@ export const updateUserRole = (uid, role) => {
     return updateDoc(userDocRef, { role });
 };
 
+/**
+ * Creates or updates an in-progress daily summary document.
+ * @param {object} summaryData - The data from the MeterReadingsForm.
+ * @param {object} user - The user submitting the form.
+ * @param {string|null} summaryId - The ID of the existing document, if any.
+ * @returns {Promise}
+ */
+export const saveDailyReadings = async (summaryData, user, summaryId = null) => {
+    const dailySummaryRef = summaryId ? doc(db, `artifacts/${appId}/daily_summaries`, summaryId) : doc(collection(db, `artifacts/${appId}/daily_summaries`));
+
+    const completeRecord = {
+        date: new Date(summaryData.date),
+        branchId: summaryData.branchId,
+        cashierName: summaryData.cashierName,
+        meters: {
+            openingMeterA: parseFloat(summaryData.openingMeterA) || 0,
+            closingMeterA: parseFloat(summaryData.closingMeterA) || 0,
+            openingMeterB: parseFloat(summaryData.openingMeterB) || 0,
+            closingMeterB: parseFloat(summaryData.closingMeterB) || 0,
+            pricePerKg: parseFloat(summaryData.pricePerKg) || 0,
+        },
+        status: 'in_progress',
+        submittedBy: { uid: user.uid, email: user.email },
+        createdAt: serverTimestamp(),
+    };
+
+    await setDoc(dailySummaryRef, completeRecord, { merge: true });
+    return dailySummaryRef.id;
+};
+
+/**
+ * Submits a completed daily summary to the approval queue.
+ * @param {string} summaryId - The ID of the daily summary to finalize.
+ * @param {object} user - The user finalizing the report.
+ * @returns {Promise}
+ */
+export const finalizeDailySummary = async (summaryId, user) => {
+    const summaryRef = doc(db, `artifacts/${appId}/daily_summaries`, summaryId);
+    return updateDoc(summaryRef, {
+        status: 'pending',
+        submittedAt: serverTimestamp(),
+    });
+};
+
+/**
+ * Gets the single in-progress daily summary for a given user.
+ * @param {string} uid - The user's UID.
+ * @returns {Query}
+ */
+export const getDailySummaryQuery = (uid) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return query(
+        collection(db, `artifacts/${appId}/daily_summaries`),
+        where('submittedBy.uid', '==', uid),
+        where('status', '==', 'in_progress'),
+        where('createdAt', '>=', today),
+        limit(1)
+    );
+};
+
 // --- Live Data Entry Functions ---
 
 export const addDataEntry = async (logData, user, type) => {
+    const { dailySummaryId, ...dataWithoutSummaryId } = logData;
+    if (!dailySummaryId) throw new Error("A daily summary ID is required to log transactions.");
+    
+    // The rest of the function remains the same, but the Firestore document
+    // will now include the dailySummaryId field.
     if (type === 'expense') {
         const dataEntryRef = collection(db, `artifacts/${appId}/data_entries`);
         const expenseData = {
             type: 'expense',
-            ...logData,
-            date: new Date(logData.date),
+            ...dataWithoutSummaryId,
+            dailySummaryId, // Link the entry to the summary
+            date: new Date(dataWithoutSummaryId.date),
             status: 'pending',
             submittedBy: { uid: user.uid, email: user.email },
             submittedAt: serverTimestamp(),
-            amount: parseFloat(logData.amount)
+            amount: parseFloat(dataWithoutSummaryId.amount)
         };
         return addDoc(dataEntryRef, expenseData);
     }
-
     if (type === 'sale') {
         // Use a Firestore Transaction to ensure atomic read/write
         return await runTransaction(db, async (transaction) => {
@@ -133,6 +200,8 @@ export const updateLogStatus = (logId, newStatus, user) => {
 
 /**
  * Adds a complete end-of-day summary record to the database.
+ * This is used for both live end-of-day submissions (pending approval)
+ * and historical data migration (pre-approved).
  * @param {object} summaryData - The complete data from the end-of-day form.
  * @param {object} user - The user submitting the form.
  * @returns {Promise}
@@ -140,10 +209,14 @@ export const updateLogStatus = (logId, newStatus, user) => {
 export const addDailySummary = (summaryData, user) => {
     const summaryRef = collection(db, `artifacts/${appId}/daily_summaries`);
     
+    // Convert string inputs to numbers
+    const posAmount = parseFloat(summaryData.posAmount) || 0;
+    const cashAmount = parseFloat(summaryData.cashAmount) || 0;
+
     const salesData = {
-        posAmount: parseFloat(summaryData.posAmount) || 0,
-        cashAmount: parseFloat(summaryData.cashAmount) || 0,
-        totalRevenue: (parseFloat(summaryData.posAmount) || 0) + (parseFloat(summaryData.cashAmount) || 0),
+        posAmount: posAmount,
+        cashAmount: cashAmount,
+        totalRevenue: posAmount + cashAmount,
     };
 
     const meterData = {
@@ -154,14 +227,11 @@ export const addDailySummary = (summaryData, user) => {
         pricePerKg: parseFloat(summaryData.pricePerKg) || 0,
     };
 
-
-
-    // UPDATED: Expenses now include category and a specific date
     const expensesData = summaryData.expenses.map(exp => ({
         description: exp.description,
         category: exp.category,
         amount: parseFloat(exp.amount) || 0,
-        date: new Date(exp.date), // Store each expense with its own date
+        date: new Date(exp.date),
     })).filter(exp => exp.description && exp.amount > 0);
 
     const completeRecord = {
@@ -173,6 +243,8 @@ export const addDailySummary = (summaryData, user) => {
         expenses: expensesData,
         submittedBy: { uid: user.uid, email: user.email },
         createdAt: serverTimestamp(),
+        // FIX: Add a default 'approved' status for historical data
+        status: 'approved',
     };
 
     return addDoc(summaryRef, completeRecord);
@@ -457,4 +529,43 @@ export const getApprovedEntriesQuery = (branchId = 'all') => {
         queryConstraints.push(where("branchId", "==", branchId));
     }
     return query(collection(db, `artifacts/${appId}/data_entries`), ...queryConstraints);
+};
+
+export const getTransactionHistoryQuery = (filters, lastDoc = null) => {
+    const { branchId, type, startDate, endDate, limitSize = 25 } = filters;
+    let q = collection(db, `artifacts/${appId}/data_entries`);
+    
+    // Base query for all approved entries
+    q = query(q, where("status", "==", "approved"));
+    
+    // Add dynamic filters
+    if (branchId && branchId !== 'all') {
+        q = query(q, where("branchId", "==", branchId));
+    }
+    if (type && type !== 'all') {
+        q = query(q, where("type", "==", type));
+    }
+    if (startDate) {
+        const start = new Date(startDate);
+        start.setHours(0, 0, 0, 0);
+        q = query(q, where("date", ">=", start));
+    }
+    if (endDate) {
+        const end = new Date(endDate);
+        end.setHours(23, 59, 59, 999);
+        q = query(q, where("date", "<=", end));
+    }
+    
+    // Always order for consistent pagination
+    q = query(q, orderBy("date", "desc"));
+    
+    // Implement pagination
+    if (lastDoc) {
+        q = query(q, startAfter(lastDoc));
+    }
+    
+    // Set a document limit for the page
+    q = query(q, limit(limitSize));
+
+    return q;
 };
