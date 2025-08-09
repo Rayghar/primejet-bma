@@ -1,9 +1,8 @@
-// src/views/04-DataEntry/EndOfDayReportModal.js (NEW FILE)
-
+// src/views/04-DataEntry/EndOfDayReportModal.js
 import React, { useState, useEffect } from 'react';
 import { getEntriesForDate } from '../../api/firestoreService';
 import { formatDate, formatCurrency } from '../../utils/formatters';
-import Modal from '../../components/shared/modal';
+import Modal from '../../components/shared/Modal';
 import Button from '../../components/shared/Button';
 import { Printer } from 'lucide-react';
 
@@ -14,32 +13,36 @@ export default function EndOfDayReportModal({ date, onClose }) {
     useEffect(() => {
         const fetchReportData = async () => {
             setLoading(true);
-            const entries = await getEntriesForDate(date);
-            
-            const sales = entries.filter(e => e.type === 'sale');
-            const expenses = entries.filter(e => e.type === 'expense');
+            try {
+                const entries = await getEntriesForDate(date);
+                
+                const sales = entries.filter(e => e.type === 'sale');
+                const expenses = entries.filter(e => e.type === 'expense');
 
-            const totals = {
-                totalRevenue: sales.reduce((sum, s) => sum + s.revenue, 0),
-                totalKgSold: sales.reduce((sum, s) => sum + s.kgSold, 0),
-                totalExpenses: expenses.reduce((sum, e) => sum + e.amount, 0),
-            };
+                const totals = {
+                    totalRevenue: sales.reduce((sum, s) => sum + s.revenue, 0),
+                    totalKgSold: sales.reduce((sum, s) => sum + s.kgSold, 0),
+                    totalExpenses: expenses.reduce((sum, e) => sum + e.amount, 0),
+                };
 
-            setReportData({ sales, expenses, totals });
-            setLoading(false);
+                setReportData({ sales, expenses, totals });
+            } catch (error) {
+                console.error("Failed to fetch report data:", error);
+            } finally {
+                setLoading(false);
+            }
         };
 
         fetchReportData();
     }, [date]);
 
     const handlePrint = () => {
-        // This is a simplified print. A production app might use a library like react-to-print.
         const printContents = document.getElementById('report-content').innerHTML;
         const originalContents = document.body.innerHTML;
-        document.body.innerHTML = printContents;
+        document.body.innerHTML = `<html><head><title>Print Report</title></head><body>${printContents}</body></html>`;
         window.print();
         document.body.innerHTML = originalContents;
-        window.location.reload(); // Reload to restore styles and event handlers
+        window.location.reload();
     };
 
     return (
@@ -49,11 +52,9 @@ export default function EndOfDayReportModal({ date, onClose }) {
             ) : reportData ? (
                 <div>
                     <div id="report-content">
-                        {/* This div will be targeted for printing */}
-                        <style>{`@media print { body { padding: 2rem; } .no-print { display: none !important; } }`}</style>
                         <h1 style={{color: 'black', fontSize: '24px', fontWeight: 'bold'}}>PrimeJet Gas LLC</h1>
                         <h2 style={{color: 'black', fontSize: '18px'}}>End-of-Day Summary</h2>
-                        <p style={{color: 'black'}}>Date: ${formatDate(date)}</p>
+                        <p style={{color: 'black'}}>Date: {formatDate(date)}</p>
                         <hr style={{margin: '1rem 0'}} />
 
                         <h3 style={{color: 'black', fontWeight: 'bold'}}>Summary</h3>
@@ -63,14 +64,14 @@ export default function EndOfDayReportModal({ date, onClose }) {
                         
                         <hr style={{margin: '1rem 0'}} />
                         <h3 style={{color: 'black', fontWeight: 'bold'}}>All Sales</h3>
-                        {reportData.sales.length > 0 ? reportData.sales.map(s => (
-                            <p key={s.id}>{s.kgSold} kg ({s.saleType}) - {formatCurrency(s.revenue)}</p>
+                        {reportData.sales.length > 0 ? reportData.sales.map((s, i) => (
+                            <p key={`sale-${i}`}>{s.kgSold} kg ({s.paymentMethod}) - {formatCurrency(s.revenue)}</p>
                         )) : <p>No sales recorded.</p>}
 
                         <hr style={{margin: '1rem 0'}} />
                         <h3 style={{color: 'black', fontWeight: 'bold'}}>All Expenses</h3>
-                        {reportData.expenses.length > 0 ? reportData.expenses.map(e => (
-                            <p key={e.id}>{e.description} ({e.category}) - {formatCurrency(e.amount)}</p>
+                        {reportData.expenses.length > 0 ? reportData.expenses.map((e, i) => (
+                            <p key={`exp-${i}`}>{e.description} ({e.category}) - {formatCurrency(e.amount)}</p>
                         )) : <p>No expenses recorded.</p>}
                     </div>
                     <div className="flex justify-end pt-4 no-print">

@@ -1,4 +1,7 @@
-// src/components/shared/Modal.js
+// =======================================================================
+// src/components/shared/Modal.js (NEW)
+// A reusable modal component.
+// =======================================================================
 import React from 'react';
 
 export default function Modal({ children, title, onClose }) {

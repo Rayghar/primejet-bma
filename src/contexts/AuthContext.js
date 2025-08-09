@@ -1,46 +1,39 @@
 // src/contexts/AuthContext.js
 import React, { createContext, useState, useEffect } from 'react';
-import { onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-import { auth } from '../api/firebase';
-import { getUserProfile, createUserProfile } from '../api/firestoreService';
+import { onAuthStateChangedListener } from '../api/authService';
 
-export const AuthContext = createContext();
+// Create the context that components will consume
+export const AuthContext = createContext({
+  user: null,
+  loading: true,
+});
 
+// Create the provider component that will wrap the application
 export const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState(null);
-    const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        const handleAuth = async (firebaseUser) => {
-            if (firebaseUser && !firebaseUser.isAnonymous) {
-                const userProfile = await getUserProfile(firebaseUser.uid);
-                setUser({ uid: firebaseUser.uid, email: firebaseUser.email, ...(userProfile || await createUserProfile(firebaseUser.uid, firebaseUser.email)) });
-            } else {
-                setUser(null); // No user or anonymous user
-            }
-            setLoading(false);
-        };
+  // Use useEffect to subscribe to the Firebase auth state listener
+  // This will run once when the component mounts
+  useEffect(() => {
+    const unsubscribe = onAuthStateChangedListener((user) => {
+      // The listener returns the user object from Firebase/Firestore
+      // or null if they are logged out.
+      setUser(user);
+      // Once we get the first response, we are no longer loading
+      setLoading(false);
+    });
 
-        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-            if (firebaseUser) {
-                await handleAuth(firebaseUser);
-            } else {
-                const customToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                if (customToken) {
-                    try {
-                        await signInWithCustomToken(auth, customToken);
-                    } catch (e) { setLoading(false); }
-                } else {
-                    setLoading(false);
-                }
-            }
-        });
-        return unsubscribe;
-    }, []);
+    // Cleanup subscription on unmount
+    return unsubscribe;
+  }, []); // Empty dependency array ensures this runs only once
 
-    return (
-        <AuthContext.Provider value={{ user, loading }}>
-            {!loading && children}
-        </AuthContext.Provider>
-    );
+  const value = { user, loading };
+
+  return (
+    <AuthContext.Provider value={value}>
+      {/* Render children only when not loading to prevent flicker */}
+      {!loading && children}
+    </AuthContext.Provider>
+  );
 };

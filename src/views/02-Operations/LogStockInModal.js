@@ -1,9 +1,8 @@
-// src/views/02-Operations/LogStockInModal.js (NEW FILE)
-
+// src/views/02-Operations/LogStockInModal.js
 import React, { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { addStockIn } from '../../api/firestoreService';
-import Modal from '../../components/shared/modal';
+import Modal from '../../components/shared/Modal';
 import Button from '../../components/shared/Button';
 
 export default function LogStockInModal({ onClose, onSuccess }) {
@@ -12,6 +11,8 @@ export default function LogStockInModal({ onClose, onSuccess }) {
         quantityKg: '2500',
         supplier: 'Refinery',
         purchaseDate: new Date().toISOString().split('T')[0],
+        costPerKg: '', // NEW FIELD
+        targetSalePricePerKg: '', // NEW FIELD
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -38,6 +39,17 @@ export default function LogStockInModal({ onClose, onSuccess }) {
                 <div>
                     <label className="block text-sm font-medium text-gray-700">Quantity (kg)</label>
                     <input type="number" name="quantityKg" value={formData.quantityKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required />
+                </div>
+                {/* NEW FIELDS ADDED HERE */}
+                <div className="grid grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Cost Price / kg (₦)</label>
+                        <input type="number" name="costPerKg" value={formData.costPerKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g., 850" required />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Target Sale Price / kg (₦)</label>
+                        <input type="number" name="targetSalePricePerKg" value={formData.targetSalePricePerKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g., 1100" required />
+                    </div>
                 </div>
                 <div>
                     <label className="block text-sm font-medium text-gray-700">Supplier</label>

@@ -1,40 +1,20 @@
-
 // src/api/authService.js
-import { onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, appId } from './firebase';
 
 /**
- * Listens for changes to the user's authentication state.
- * @param {function} callback - The function to call with the user data.
- * @returns {function} - The unsubscribe function.
+ * Signs in a user with their email and password.
+ * This is the function the login form will call.
+ * @param {string} email - The user's email.
+ * @param {string} password - The user's password.
+ * @returns {Promise<UserCredential>} - A promise that resolves with the user credential.
  */
-export const onAuthStateChangedListener = (callback) => {
-    return onAuthStateChanged(auth, async (user) => {
-        if (user) {
-            const userProfile = await getUserProfile(user.uid);
-            if (userProfile) {
-                callback({ ...user, ...userProfile });
-            } else {
-                // If user exists in Auth but not Firestore, create a default profile
-                const newUserProfile = await createUserProfile(user.uid, user.email);
-                callback({ ...user, ...newUserProfile });
-            }
-        } else {
-            // Handle anonymous or custom token sign-in
-            try {
-                const customToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                if (customToken) {
-                    await signInWithCustomToken(auth, customToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Authentication failed:", error);
-                callback(null);
-            }
-        }
-    });
+export const signInUser = async (email, password) => {
+    if (!email || !password) {
+        throw new Error("Email and password are required.");
+    }
+    return await signInWithEmailAndPassword(auth, email, password);
 };
 
 /**
@@ -64,4 +44,30 @@ export const createUserProfile = async (uid, email) => {
     };
     await setDoc(userDocRef, newUserProfile);
     return newUserProfile;
+};
+
+/**
+ * Listens for changes to the user's authentication state.
+ * @param {function} callback - The function to call with the user data.
+ * @returns {function} - The unsubscribe function.
+ */
+export const onAuthStateChangedListener = (callback) => {
+    return onAuthStateChanged(auth, async (user) => {
+        if (user && !user.isAnonymous) {
+            // This block only runs for named users (e.g., email/password)
+            const userProfile = await getUserProfile(user.uid);
+            if (userProfile) {
+                // If profile exists, combine auth data and profile data
+                callback({ ...user, ...userProfile });
+            } else {
+                // If a named user signs in for the first time and has no profile,
+                // create one with the default "Cashier" role.
+                const newUserProfile = await createUserProfile(user.uid, user.email);
+                callback({ ...user, ...newUserProfile });
+            }
+        } else {
+            // For anonymous users or when logged out, return null.
+            callback(null);
+        }
+    });
 };

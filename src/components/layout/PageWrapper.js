@@ -1,4 +1,7 @@
-// src/components/layout/PageWrapper.js
+// =======================================================================
+// src/components/layout/PageWrapper.js (NEW)
+// A wrapper component for consistent content padding and layout.
+// =======================================================================
 import React from 'react';
 
 export default function PageWrapper({ children }) {

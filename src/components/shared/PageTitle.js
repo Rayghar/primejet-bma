@@ -1,4 +1,7 @@
-// src/components/shared/PageTitle.js
+// =======================================================================
+// src/components/shared/PageTitle.js (NEW)
+// A component for consistent page titles.
+// =======================================================================
 import React from 'react';
 
 export default function PageTitle({ title, subtitle }) {

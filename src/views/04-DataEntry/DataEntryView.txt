@@ -1,3 +1,5 @@
+// src/views/04-DataEntry/DailyEntryView.js
+
 import React, { useState, useContext, useMemo } from 'react';
 // FIX: Ensured 'App' is capitalized consistently in the import path.
 import { AppContext } from '../../app'; 

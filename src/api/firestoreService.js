@@ -1,8 +1,34 @@
 // src/api/firestoreService.js
+import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import {
-    collection, query, where, doc, addDoc, updateDoc, serverTimestamp, setDoc, getDoc, orderBy, getDocs, Timestamp
+    collection, query, where, doc, addDoc, updateDoc, serverTimestamp, setDoc, getDoc, orderBy, getDocs, writeBatch, Timestamp, deleteDoc, runTransaction, limit
 } from 'firebase/firestore';
-import { db, appId } from './firebase';
+import { auth, db, appId } from './firebase';
+
+// --- Authentication & User Profile Functions ---
+
+export const signInUser = async (email, password) => {
+    if (!email || !password) {
+        throw new Error("Email and password are required.");
+    }
+    return await signInWithEmailAndPassword(auth, email, password);
+};
+
+export const onAuthStateChangedListener = (callback) => {
+    return onAuthStateChanged(auth, async (user) => {
+        if (user && !user.isAnonymous) {
+            const userProfile = await getUserProfile(user.uid);
+            if (userProfile) {
+                callback({ ...user, ...userProfile });
+            } else {
+                const newUserProfile = await createUserProfile(user.uid, user.email);
+                callback({ ...user, ...newUserProfile });
+            }
+        } else {
+            callback(null);
+        }
+    });
+};
 
 export const getUserProfile = async (uid) => {
     const userDocRef = doc(db, `artifacts/${appId}/users`, uid);
@@ -12,7 +38,12 @@ export const getUserProfile = async (uid) => {
 
 export const createUserProfile = async (uid, email) => {
     const userDocRef = doc(db, `artifacts/${appId}/users`, uid);
-    const newUserProfile = { email, role: 'Cashier', status: 'active', createdAt: serverTimestamp() };
+    const newUserProfile = {
+        email,
+        role: 'Cashier',
+        status: 'active',
+        createdAt: serverTimestamp(),
+    };
     await setDoc(userDocRef, newUserProfile);
     return newUserProfile;
 };
@@ -27,28 +58,224 @@ export const updateUserRole = (uid, role) => {
     return updateDoc(userDocRef, { role });
 };
 
-export const addDataEntry = (logData, user, type) => {
-    const dataEntryRef = collection(db, `artifacts/${appId}/data_entries`);
-    const commonData = {
-        type,
-        ...logData,
-        date: new Date(logData.date),
-        status: 'pending',
-        submittedBy: { uid: user.uid, email: user.email },
-        submittedAt: serverTimestamp(),
-    };
-    if (type === 'sale') {
-        commonData.revenue = parseFloat(logData.revenue);
-        commonData.kgSold = parseFloat(logData.kgSold);
+// --- Live Data Entry Functions ---
+
+export const addDataEntry = async (logData, user, type) => {
+    if (type === 'expense') {
+        const dataEntryRef = collection(db, `artifacts/${appId}/data_entries`);
+        const expenseData = {
+            type: 'expense',
+            ...logData,
+            date: new Date(logData.date),
+            status: 'pending',
+            submittedBy: { uid: user.uid, email: user.email },
+            submittedAt: serverTimestamp(),
+            amount: parseFloat(logData.amount)
+        };
+        return addDoc(dataEntryRef, expenseData);
     }
-    if (type === 'expense') commonData.amount = parseFloat(logData.amount);
-    return addDoc(dataEntryRef, commonData);
-};
+
+    if (type === 'sale') {
+        // Use a Firestore Transaction to ensure atomic read/write
+        return await runTransaction(db, async (transaction) => {
+            // 1. Find the oldest stock batch with remaining inventory
+            const stockQuery = query(
+                collection(db, `artifacts/${appId}/stock_ins`),
+                where("remainingKg", ">", 0),
+                orderBy("createdAt", "asc"),
+                limit(1)
+            );
+            
+            const stockDocs = await getDocs(stockQuery);
+            if (stockDocs.empty) {
+                throw new Error("No stock available to sell from. Please log a new stock-in.");
+            }
+            
+            const stockBatch = stockDocs.docs[0];
+            const stockBatchRef = stockBatch.ref;
+            const stockBatchData = stockBatch.data();
+
+            const kgSold = parseFloat(logData.kgSold) || 0;
+            if (kgSold > stockBatchData.remainingKg) {
+                throw new Error(`Sale quantity (${kgSold} kg) exceeds available stock in current batch (${stockBatchData.remainingKg} kg).`);
+            }
+            
+            // 2. Create the new sale document and link it to the batch
+            const dataEntryRef = doc(collection(db, `artifacts/${appId}/data_entries`));
+            const saleData = {
+                type: 'sale',
+                ...logData,
+                date: new Date(logData.date),
+                status: 'pending',
+                submittedBy: { uid: user.uid, email: user.email },
+                submittedAt: serverTimestamp(),
+                revenue: parseFloat(logData.revenue),
+                kgSold: kgSold,
+                batchId: stockBatch.id // Link the sale to the batch
+            };
+            transaction.set(dataEntryRef, saleData);
+
+            // 3. Atomically update the remaining quantity on the stock batch
+            const newRemainingKg = stockBatchData.remainingKg - kgSold;
+            transaction.update(stockBatchRef, { remainingKg: newRemainingKg });
+
+            return dataEntryRef.id;
+        });
+    }
+}
 
 export const updateLogStatus = (logId, newStatus, user) => {
     const logDocRef = doc(db, `artifacts/${appId}/data_entries`, logId);
     return updateDoc(logDocRef, { status: newStatus, reviewedBy: { uid: user.uid, email: user.email }, reviewedAt: serverTimestamp() });
 };
+
+// --- Daily Summary Functions (NEW) ---
+
+/**
+ * Adds a complete end-of-day summary record to the database.
+ * @param {object} summaryData - The complete data from the end-of-day form.
+ * @param {object} user - The user submitting the form.
+ * @returns {Promise}
+ */
+export const addDailySummary = (summaryData, user) => {
+    const summaryRef = collection(db, `artifacts/${appId}/daily_summaries`);
+    
+    const salesData = {
+        posAmount: parseFloat(summaryData.posAmount) || 0,
+        cashAmount: parseFloat(summaryData.cashAmount) || 0,
+        totalRevenue: (parseFloat(summaryData.posAmount) || 0) + (parseFloat(summaryData.cashAmount) || 0),
+    };
+
+    const meterData = {
+        openingMeterA: parseFloat(summaryData.openingMeterA) || 0,
+        closingMeterA: parseFloat(summaryData.closingMeterA) || 0,
+        openingMeterB: parseFloat(summaryData.openingMeterB) || 0,
+        closingMeterB: parseFloat(summaryData.closingMeterB) || 0,
+        pricePerKg: parseFloat(summaryData.pricePerKg) || 0,
+    };
+
+
+
+    // UPDATED: Expenses now include category and a specific date
+    const expensesData = summaryData.expenses.map(exp => ({
+        description: exp.description,
+        category: exp.category,
+        amount: parseFloat(exp.amount) || 0,
+        date: new Date(exp.date), // Store each expense with its own date
+    })).filter(exp => exp.description && exp.amount > 0);
+
+    const completeRecord = {
+        date: new Date(summaryData.date),
+        branchId: summaryData.branchId,
+        cashierName: summaryData.cashierName,
+        sales: salesData,
+        meters: meterData,
+        expenses: expensesData,
+        submittedBy: { uid: user.uid, email: user.email },
+        createdAt: serverTimestamp(),
+    };
+
+    return addDoc(summaryRef, completeRecord);
+};
+
+
+
+export const approveDailySummary = async (summaryId, entryIds, status, user) => {
+    const batch = writeBatch(db);
+    
+    // 1. Update the daily summary document
+    const summaryRef = doc(db, `artifacts/${appId}/daily_summaries`, summaryId);
+    batch.update(summaryRef, {
+        status: status,
+        reviewedBy: { uid: user.uid, email: user.email },
+        reviewedAt: serverTimestamp()
+    });
+
+    // 2. Update all associated individual data entries in a batch
+    const dataEntryCollection = collection(db, `artifacts/${appId}/data_entries`);
+    for (const entryId of entryIds) {
+        const entryRef = doc(dataEntryCollection, entryId);
+        batch.update(entryRef, {
+            status: status,
+            reviewedBy: { uid: user.uid, email: user.email },
+            reviewedAt: serverTimestamp()
+        });
+    }
+
+    return await batch.commit();
+};
+
+export const getEntriesForDate = async (dateString) => {
+    const startOfDay = new Date(dateString);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(dateString);
+    endOfDay.setHours(23, 59, 59, 999);
+
+    const q = query(
+        collection(db, `artifacts/${appId}/data_entries`),
+        where("submittedAt", ">=", startOfDay),
+        where("submittedAt", "<=", endOfDay),
+        where("status", "==", "pending")
+    );
+    const querySnapshot = await getDocs(q);
+    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+};
+
+// --- Historical & Unified Data Functions ---
+
+export const getUnifiedFinancialData = async () => {
+    const entriesQuery = query(collection(db, `artifacts/${appId}/data_entries`), where("status", "==", "approved"));
+    const entriesSnapshot = await getDocs(entriesQuery);
+    const liveEntries = entriesSnapshot.docs.map(doc => doc.data());
+
+    const summariesQuery = query(collection(db, `artifacts/${appId}/daily_summaries`), where("status", "==", "approved"));
+    const summariesSnapshot = await getDocs(summariesQuery);
+    const historicalSummaries = summariesSnapshot.docs.map(doc => doc.data());
+
+    const unifiedData = [];
+    liveEntries.forEach(entry => {
+        if (entry.type === 'sale') unifiedData.push({ type: 'sale', date: entry.date, revenue: entry.revenue, kgSold: entry.kgSold, branchId: entry.branchId, source: 'live' });
+        else if (entry.type === 'expense') unifiedData.push({ type: 'expense', date: entry.date, amount: entry.amount, branchId: entry.branchId, source: 'live' });
+    });
+
+    historicalSummaries.forEach(summary => {
+        if (summary.sales && summary.sales.totalRevenue > 0) {
+            const kgA = (summary.meters.closingMeterA || 0) - (summary.meters.openingMeterA || 0);
+            const kgB = (summary.meters.closingMeterB || 0) - (summary.meters.openingMeterB || 0);
+            unifiedData.push({ type: 'sale', date: summary.date, revenue: summary.sales.totalRevenue, kgSold: kgA + kgB, branchId: summary.branchId, source: 'historical' });
+        }
+        if (summary.expenses && summary.expenses.length > 0) {
+            summary.expenses.forEach(expense => unifiedData.push({ type: 'expense', date: summary.date, amount: expense.amount, branchId: summary.branchId, source: 'historical' }));
+        }
+    });
+    return unifiedData;
+};
+
+export const addHistoricalEntry = (logData, user) => {
+    const dataEntryRef = collection(db, `artifacts/${appId}/data_entries`);
+    const entry = {
+        type: 'sale',
+        branchId: logData.branchId,
+        date: new Date(logData.date),
+        kgSold: parseFloat(logData.kgSold),
+        revenue: parseFloat(logData.amountPaid),
+        paymentMethod: logData.paymentMethod,
+        receiptNumber: logData.receiptNumber,
+        transactionRef: logData.transactionRef,
+        status: 'approved',
+        isHistorical: true,
+        submittedBy: { uid: user.uid, email: user.email },
+        submittedAt: serverTimestamp(),
+        reviewedBy: { uid: user.uid, email: user.email },
+        reviewedAt: serverTimestamp(),
+    };
+    if (logData.customerId) {
+        entry.customerId = logData.customerId;
+    }
+    return addDoc(dataEntryRef, entry);
+};
+
+// --- Asset & Inventory Management Functions ---
 
 export const getAssetsQuery = () => query(collection(db, `artifacts/${appId}/assets`));
 
@@ -57,92 +284,6 @@ export const addAsset = (assetData) => {
     return addDoc(assetsRef, { ...assetData, cost: parseFloat(assetData.cost), purchaseDate: new Date(assetData.purchaseDate), createdAt: serverTimestamp() });
 };
 
-export const getApprovedEntriesQuery = (branchId = 'all') => {
-    const queryConstraints = [
-        collection(db, `artifacts/${appId}/data_entries`),
-        where("status", "==", "approved")
-    ];
-    if (branchId && branchId !== 'all') {
-        queryConstraints.push(where("branchId", "==", branchId));
-    }
-    return query(...queryConstraints);
-};
-
-/**
- * Creates a query to get all plants.
- * @returns {Query} A Firestore query object.
- */
-export const getPlantsQuery = () => {
-    return query(collection(db, `artifacts/${appId}/plants`), orderBy('name'));
-};
-
-
-/**
- * Creates a query to get all cylinders.
- * @returns {Query} A Firestore query object.
- */
-export const getCylindersQuery = () => {
-    return query(collection(db, `artifacts/${appId}/cylinders`));
-};
-
-/**
- * Leases a cylinder to a customer.
- * @param {string} cylinderId - The ID of the cylinder document.
- * @param {object} leaseData - Information about the lease.
- * @returns {Promise} A promise that resolves when the update is complete.
- */
-export const leaseCylinder = (cylinderId, leaseData) => {
-    const cylinderRef = doc(db, `artifacts/${appId}/cylinders`, cylinderId);
-    return updateDoc(cylinderRef, {
-        status: 'Leased',
-        leaseInfo: {
-            ...leaseData,
-            deposit: parseFloat(leaseData.deposit),
-            monthlyFee: parseFloat(leaseData.monthlyFee),
-            leaseStartDate: new Date(),
-        }
-    });
-};
-
-/**
- * Adds a batch of new cylinders to the database.
- * @param {number} count - The number of cylinders to add.
- * @param {string} size - The size of the cylinders (e.g., '12.5 kg').
- * @returns {Promise} A promise that resolves when the batch write is complete.
- */
-export const addCylinderBatch = async (count, size) => {
-    const batch = writeBatch(db);
-    const cylindersRef = collection(db, `artifacts/${appId}/cylinders`);
-
-    for (let i = 0; i < count; i++) {
-        const newCylinderRef = doc(cylindersRef);
-        batch.set(newCylinderRef, {
-            size,
-            status: 'Empty', // All new cylinders start as empty in the warehouse
-            createdAt: serverTimestamp(),
-            leaseInfo: null,
-        });
-    }
-
-    return batch.commit();
-};
-
-/**
- * Creates a query to get all approved sales logs (stock out).
- * @returns {Query} A Firestore query object.
- */
-export const getApprovedSalesQuery = () => {
-    return query(
-        collection(db, `artifacts/${appId}/data_entries`),
-        where("status", "==", "approved"),
-        where("type", "==", "sale")
-    );
-};
-
-/**
- * Creates a query to get all bulk stock-in records.
- * @returns {Query} A Firestore query object.
- */
 export const getStockInsQuery = () => {
     return query(collection(db, `artifacts/${appId}/stock_ins`));
 };
@@ -155,8 +296,15 @@ export const getStockInsQuery = () => {
  */
 export const addStockIn = (stockInData, user) => {
     const stockInsRef = collection(db, `artifacts/${appId}/stock_ins`);
+    const quantity = parseFloat(stockInData.quantityKg) || 0;
+
     return addDoc(stockInsRef, {
-        quantityKg: parseFloat(stockInData.quantityKg),
+        quantityKg: quantity,
+        // NEW: Add cost and target sale prices
+        costPerKg: parseFloat(stockInData.costPerKg) || 0,
+        targetSalePricePerKg: parseFloat(stockInData.targetSalePricePerKg) || 0,
+        // NEW: Track remaining quantity for this batch
+        remainingKg: quantity, 
         purchaseDate: new Date(stockInData.purchaseDate),
         supplier: stockInData.supplier,
         loggedBy: { uid: user.uid, email: user.email },
@@ -164,19 +312,70 @@ export const addStockIn = (stockInData, user) => {
     });
 };
 
-/**
- * Creates a query to get all customers.
- * @returns {Query} A Firestore query object.
- */
+export const getPlantsQuery = () => {
+    return query(collection(db, `artifacts/${appId}/plants`), orderBy('name'));
+};
+
+export const addPlant = (plantData) => {
+    const plantsRef = collection(db, `artifacts/${appId}/plants`);
+    return addDoc(plantsRef, {
+        ...plantData,
+        capacity: parseFloat(plantData.capacity) || 0,
+        outputToday: 0,
+        uptime: 100.0,
+        createdAt: serverTimestamp(),
+    });
+};
+
+export const deletePlant = (plantId) => {
+    const plantRef = doc(db, `artifacts/${appId}/plants`, plantId);
+    return deleteDoc(plantRef);
+};
+
+export const getLoansQuery = () => {
+    return query(collection(db, `artifacts/${appId}/loans`), orderBy('name'));
+};
+
+export const addLoan = (loanData) => {
+    const loansRef = collection(db, `artifacts/${appId}/loans`);
+    return addDoc(loansRef, {
+        ...loanData,
+        principal: parseFloat(loanData.principal),
+        interestRate: parseFloat(loanData.interestRate),
+        term: parseInt(loanData.term, 10),
+        createdAt: serverTimestamp(),
+    });
+};
+
+export const deleteLoan = (loanId) => {
+    const loanRef = doc(db, `artifacts/${appId}/loans`, loanId);
+    return deleteDoc(loanRef);
+};
+
+export const getCylindersQuery = () => {
+    return query(collection(db, `artifacts/${appId}/cylinders`), orderBy('size'));
+};
+
+export const addCylinder = (cylinderData) => {
+    const cylindersRef = collection(db, `artifacts/${appId}/cylinders`);
+    return addDoc(cylindersRef, {
+        ...cylinderData,
+        quantity: parseInt(cylinderData.quantity, 10),
+        createdAt: serverTimestamp(),
+    });
+};
+
+export const deleteCylinder = (cylinderId) => {
+    const cylinderRef = doc(db, `artifacts/${appId}/cylinders`, cylinderId);
+    return deleteDoc(cylinderRef);
+};
+
+// --- Customer & Logistics Functions ---
+
 export const getCustomersQuery = () => {
     return query(collection(db, `artifacts/${appId}/customers`), orderBy('name'));
 };
 
-/**
- * Adds a new customer to the Firestore database.
- * @param {object} customerData - The data for the new customer.
- * @returns {Promise} A promise that resolves when the customer is added.
- */
 export const addCustomer = (customerData) => {
     const customersRef = collection(db, `artifacts/${appId}/customers`);
     return addDoc(customersRef, {
@@ -185,36 +384,34 @@ export const addCustomer = (customerData) => {
     });
 };
 
-/**
- * Creates a query to get all approved sales for a specific customer.
- * @param {string} customerId - The ID of the customer.
- * @returns {Query} A Firestore query object.
- */
 export const getSalesForCustomerQuery = (customerId) => {
-    // This assumes you will add a `customerId` field to your sales logs.
-    // For now, we'll simulate by filtering by customer name on the client side.
-    // A real implementation would require updating the sales log data structure.
     return query(
         collection(db, `artifacts/${appId}/data_entries`),
         where("status", "==", "approved"),
-        where("type", "==", "sale")
-        // where("customerId", "==", customerId) // Ideal future query
+        where("type", "==", "sale"),
+        where("customerId", "==", customerId)
     );
 };
 
-
-/**
- * Creates a query to get all vans.
- * @returns {Query} A Firestore query object.
- */
-export const getVansQuery = () => {
-    return query(collection(db, `artifacts/${appId}/vans`), orderBy('id'));
+// ADDED BACK: Customer Notes Functions
+export const addCustomerNote = (customerId, noteText, user) => {
+    const notesRef = collection(db, `artifacts/${appId}/customers/${customerId}/notes`);
+    return addDoc(notesRef, {
+        text: noteText,
+        createdAt: serverTimestamp(),
+        author: { uid: user.uid, email: user.email }
+    });
 };
 
-/**
- * Creates a query to get all unassigned delivery orders.
- * @returns {Query} A Firestore query object.
- */
+export const getCustomerNotesQuery = (customerId) => {
+    if (!customerId) return null;
+    return query(collection(db, `artifacts/${appId}/customers/${customerId}/notes`), orderBy('createdAt', 'desc'));
+};
+
+export const getVansQuery = () => {
+    return query(collection(db, `artifacts/${appId}/vans`), orderBy('vanNumber'));
+};
+
 export const getUnassignedOrdersQuery = () => {
     return query(
         collection(db, `artifacts/${appId}/delivery_orders`),
@@ -222,108 +419,42 @@ export const getUnassignedOrdersQuery = () => {
     );
 };
 
-/**
- * Assigns an order to a van, updating both documents.
- * @param {string} vanId - The document ID of the van.
- * @param {string} orderId - The document ID of the order.
- * @param {object} orderDetails - Details from the order needed for the van doc.
- * @returns {Promise} A promise that resolves when the updates are complete.
- */
 export const assignOrderToVan = (vanId, orderId, orderDetails) => {
     const vanRef = doc(db, `artifacts/${appId}/vans`, vanId);
     const orderRef = doc(db, `artifacts/${appId}/delivery_orders`, orderId);
-
-    // Use a batch write to update both documents atomically
     const batch = writeBatch(db);
-
-    batch.update(vanRef, {
-        status: 'On Delivery',
-        currentOrderId: orderId,
-        destination: orderDetails.area,
-    });
-
-    batch.update(orderRef, {
-        status: 'assigned',
-        vanId: vanId,
-    });
-
+    batch.update(vanRef, { status: 'On Delivery', currentOrderId: orderId, destination: orderDetails.area });
+    batch.update(orderRef, { status: 'assigned', vanId: vanId });
     return batch.commit();
 };
 
-/**
- * Fetches all approved sales and expense entries for a specific date.
- * @param {Date} date - The date for which to fetch entries.
- * @returns {Promise<Array>} A promise that resolves with an array of entries.
- */
-export const getEntriesForDate = async (date) => {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
+// --- Configuration Functions ---
 
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-
-    const q = query(
-        collection(db, `artifacts/${appId}/data_entries`),
-        where("status", "==", "approved"),
-        where("date", ">=", Timestamp.fromDate(startOfDay)),
-        where("date", "<=", Timestamp.fromDate(endOfDay))
-    );
-
-    const querySnapshot = await getDocs(q);
-    return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-};
-
-/**
- * Adds a historical sales log directly to the database as 'approved'.
- * @param {object} logData - The data for the historical entry.
- * @param {object} user - The user performing the migration.
- * @returns {Promise} A promise that resolves when the entry is added.
- */
-export const addHistoricalEntry = (logData, user) => {
-    const dataEntryRef = collection(db, `artifacts/${appId}/data_entries`);
-    return addDoc(dataEntryRef, {
-        type: 'sale',
-        branchId: logData.branchId,
-        date: new Date(logData.date),
-        kgSold: parseFloat(logData.kgSold),
-        revenue: parseFloat(logData.amountPaid),
-        paymentMethod: logData.paymentMethod,
-        receiptNumber: logData.receiptNumber,
-        transactionRef: logData.transactionRef,
-        
-        status: 'approved', // Bypasses the queue
-        isHistorical: true, // Flag for historical data
-        
-        submittedBy: { uid: user.uid, email: user.email },
-        submittedAt: serverTimestamp(),
-        reviewedBy: { uid: user.uid, email: user.email }, // Self-approved
-        reviewedAt: serverTimestamp(),
-    });
-};
-
-/**
- * Fetches the main application configuration document.
- * @returns {Promise<object>} A promise that resolves with the configuration data.
- */
 export const getConfiguration = async () => {
     const configRef = doc(db, `artifacts/${appId}/configuration`, 'main_settings');
     const docSnap = await getDoc(configRef);
     if (docSnap.exists()) {
         return docSnap.data();
     } else {
-        // If no config exists, create a default one
         const defaultConfig = { lowStockThreshold: 500, taxRateVAT: 7.5 };
         await setDoc(configRef, defaultConfig);
         return defaultConfig;
     }
 };
 
-/**
- * Updates the main application configuration.
- * @param {object} settingsData - The new settings to save.
- * @returns {Promise} A promise that resolves when the update is complete.
- */
 export const updateConfiguration = (settingsData) => {
     const configRef = doc(db, `artifacts/${appId}/configuration`, 'main_settings');
     return updateDoc(configRef, settingsData);
+};
+
+// --- General Query Functions ---
+
+export const getApprovedEntriesQuery = (branchId = 'all') => {
+    const queryConstraints = [
+        where("status", "==", "approved")
+    ];
+    if (branchId && branchId !== 'all') {
+        queryConstraints.push(where("branchId", "==", branchId));
+    }
+    return query(collection(db, `artifacts/${appId}/data_entries`), ...queryConstraints);
 };

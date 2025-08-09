@@ -1,4 +1,7 @@
-// src/components/shared/Notification.js
+// =======================================================================
+// src/components/shared/Notification.js (NEW)
+// A component for displaying app-wide notifications.
+// =======================================================================
 import React, { useEffect } from 'react';
 import { CheckCircle, AlertCircle, X } from 'lucide-react';
 
