@@ -81,6 +81,7 @@ const TransactionLogger = ({ user, plants, dailySummaryId, onSuccess, onError, o
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="space-y-4">
+                {/* Pass onPushToTable to SalesLogForm and ExpenseLogForm */}
                 <SalesLogForm user={user} plants={plants} onSuccess={onSuccess} onError={onError} dailySummaryId={dailySummaryId} onPushToTable={onPushToTable} />
                 <ExpenseLogForm user={user} plants={plants} onSuccess={onSuccess} onError={onError} dailySummaryId={dailySummaryId} onPushToTable={onPushToTable} />
             </div>
@@ -88,13 +89,13 @@ const TransactionLogger = ({ user, plants, dailySummaryId, onSuccess, onError, o
                 <h3 className="text-lg font-semibold text-gray-700 mb-4">Today's Entries</h3>
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
-                        <thead><tr className="border-b bg-gray-50"><th className="p-4 text-sm font-semibold">Time</th><th className="p-4 text-sm font-semibold">Type</th><th className="p-4 text-sm font-semibold">Details</th><th className="p-4 text-sm font-semibold text-right">Amount</th></tr></thead>
+                        <thead><tr className="border-b bg-gray-50"><th className="p-4 text-sm font-semibold">Time</th><th className="p-4 text-sm font-semibold">Type</th><th className="p-4 text-sm font-semibold">Details</th><th className="p-4 text-sm font-semibold">Amount</th></tr></thead>
                         <tbody>
-                            {/* Check if localEntries is an array before checking its length */}
+                            {/* Ensure localEntries is an array before mapping */}
                             {Array.isArray(localEntries) && localEntries.length > 0 ? (
                                 localEntries.map((entry, index) => (
                                     <tr key={index} className="border-b hover:bg-gray-50">
-                                        <td className="p-4">{new Date().toLocaleTimeString()}</td>
+                                        <td className="p-4">{new Date(entry.submittedAt).toLocaleTimeString()}</td> {/* Use entry.submittedAt here */}
                                         <td className="p-4"><span className={`px-2 py-1 text-xs rounded-full ${entry.type === 'sale' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{entry.type}</span></td>
                                         <td className="p-4">{entry.type === 'sale' ? `${entry.kgSold} kg (${entry.paymentMethod})` : entry.description}</td>
                                         <td className="p-4 text-right font-semibold">{formatCurrency(entry.revenue || entry.amount)}</td>
@@ -107,6 +108,7 @@ const TransactionLogger = ({ user, plants, dailySummaryId, onSuccess, onError, o
                     </table>
                 </div>
                 <div className="flex justify-end mt-6">
+                    {/* Submit All for Approval button */}
                     <Button onClick={handleSubmitAll} disabled={!Array.isArray(localEntries) || localEntries.length === 0 || isSubmitting} icon={Send}>
                         {isSubmitting ? 'Submitting...' : 'Submit All for Approval'}
                     </Button>
@@ -145,7 +147,7 @@ const DailyReconciliation = ({ dailySummary, entries, onFinalize, loading }) => 
                 <p className="text-2xl font-bold mt-2">{formatCurrency(calculations.totalExpenses)}</p>
             </Card>
             <div className="flex justify-center pt-4">
-                <Button onClick={() => onFinalize(dailySummary.id)} icon={FileText}>Submit End-of-Day Report</Button>
+                <Button onClick={() => onFinalize(dailySummary.id, calculations)} icon={FileText}>Submit End-of-Day Report</Button> {/* Pass calculations here */}
             </div>
         </div>
     );
@@ -158,23 +160,33 @@ export default function DailyLog() {
     const [activeTab, setActiveTab] = useState('readings');
     const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
     const [showReportModal, setShowReportModal] = useState(false);
+    const [localEntries, setLocalEntries] = useState([]); // Local state for entries before batch submission
+    const [isSubmittingAll, setIsSubmittingAll] = useState(false); // State for batch submission
 
     const { docs: plants, loading: loadingPlants } = useFirestoreQuery(getPlantsQuery());
     const dailySummaryQuery = useMemo(() => getDailySummaryQuery(user.uid), [user.uid]);
     const { docs: dailySummary, loading: loadingSummary } = useFirestoreQuery(dailySummaryQuery);
     const inProgressSummary = dailySummary[0]; // Assuming there is only one in-progress summary per user per day
 
-    const todaysEntriesQuery = useMemo(() => {
+    // Fetch entries that have already been submitted (pending approval)
+    const todaysSubmittedEntriesQuery = useMemo(() => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         return query(
             collection(db, `artifacts/${appId}/data_entries`),
             where("submittedBy.uid", "==", user.uid),
             where("submittedAt", ">=", today),
+            where("status", "==", "pending"), // Only show pending entries
             orderBy("submittedAt", "desc")
         );
     }, [user.uid]);
-    const { docs: todaysEntries, loading: loadingEntries } = useFirestoreQuery(todaysEntriesQuery);
+    const { docs: todaysSubmittedEntries, loading: loadingSubmittedEntries } = useFirestoreQuery(todaysSubmittedEntriesQuery);
+
+    // Combine local entries with already submitted entries for display in the table
+    const combinedEntriesForDisplay = useMemo(() => {
+        return [...localEntries, ...todaysSubmittedEntries];
+    }, [localEntries, todaysSubmittedEntries]);
+
 
     const handleSaveReadings = async (formData) => {
         try {
@@ -187,9 +199,9 @@ export default function DailyLog() {
         }
     };
 
-    const handleFinalize = async (summaryId) => {
+    const handleFinalize = async (summaryId, calculations) => { // Accept calculations here
         try {
-            await finalizeDailySummary(summaryId, user);
+            await finalizeDailySummary(summaryId, user, calculations); // Pass calculations to service
             setNotification({ show: true, message: 'End-of-day report submitted for approval!', type: 'success' });
             setShowReportModal(true);
         } catch (error) {
@@ -206,6 +218,33 @@ export default function DailyLog() {
         logAppEvent('ERROR', `DailyLog: ${message}`, { component: 'DailyLog' });
         setNotification({ show: true, message, type: 'error' });
     };
+
+    // This function adds individual sales/expenses to the local state
+    const handlePushToTable = (entryData, type) => {
+        setLocalEntries(prevEntries => [...prevEntries, { ...entryData, type, id: Date.now(), submittedAt: new Date() }]);
+        setNotification({ show: true, message: `${type} added to table.`, type: 'success' });
+    };
+
+    // This function submits all local entries to Firestore in a batch
+    const handleSubmitAll = async () => {
+        setIsSubmittingAll(true);
+        try {
+            if (!inProgressSummary?.id) {
+                onError("Please save meter readings first to create a daily summary.");
+                return;
+            }
+            const batchPromises = localEntries.map(entry => addDataEntry({ ...entry, dailySummaryId: inProgressSummary.id }, user, entry.type));
+            await Promise.all(batchPromises);
+            setLocalEntries([]); // Clear local entries after successful submission
+            setNotification({ show: true, message: 'All transactions submitted for approval!', type: 'success' });
+        } catch (error) {
+            logAppEvent('ERROR', 'DailyLog: Failed to submit batch.', { error: error.message });
+            setNotification({ show: true, message: 'Failed to submit transactions.', type: 'error' });
+        } finally {
+            setIsSubmittingAll(false);
+        }
+    };
+
 
     return (
         <>
@@ -229,8 +268,20 @@ export default function DailyLog() {
                     </nav>
                 </div>
                 {activeTab === 'readings' && <MeterReadingsForm user={user} plants={plants} dailySummary={inProgressSummary} onSave={handleSaveReadings} loading={loadingSummary} />}
-                {activeTab === 'transactions' && <TransactionLogger user={user} plants={plants} dailySummaryId={inProgressSummary?.id} onSuccess={handleSuccess} onError={handleError} entries={todaysEntries} loadingEntries={loadingEntries} />}
-                {activeTab === 'reconciliation' && <DailyReconciliation dailySummary={inProgressSummary} entries={todaysEntries} onFinalize={handleFinalize} loading={loadingSummary || loadingEntries} />}
+                {activeTab === 'transactions' && 
+                    <TransactionLogger 
+                        user={user} 
+                        plants={plants} 
+                        dailySummaryId={inProgressSummary?.id} 
+                        onSuccess={handleSuccess} 
+                        onError={handleError} 
+                        onPushToTable={handlePushToTable} 
+                        localEntries={localEntries} // Pass local entries to TransactionLogger
+                        handleSubmitAll={handleSubmitAll} // Pass batch submission function
+                        isSubmitting={isSubmittingAll} // Pass submission state
+                    />
+                }
+                {activeTab === 'reconciliation' && <DailyReconciliation dailySummary={inProgressSummary} entries={todaysSubmittedEntries} onFinalize={handleFinalize} loading={loadingSummary || loadingSubmittedEntries} />}
             </Card>
         </>
     );

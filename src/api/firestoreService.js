@@ -1,4 +1,5 @@
 // src/api/firestoreService.js
+
 import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
 import {
     collection, query, where, doc, addDoc, updateDoc, serverTimestamp, setDoc, getDoc, orderBy, getDocs, writeBatch, Timestamp, deleteDoc, runTransaction, limit, startAfter
@@ -92,13 +93,22 @@ export const saveDailyReadings = async (summaryData, user, summaryId = null) => 
  * Submits a completed daily summary to the approval queue.
  * @param {string} summaryId - The ID of the daily summary to finalize.
  * @param {object} user - The user finalizing the report.
+ * @param {object} calculations - The calculated reconciliation data. // NEW PARAMETER
  * @returns {Promise}
  */
-export const finalizeDailySummary = async (summaryId, user) => {
+export const finalizeDailySummary = async (summaryId, user, calculations) => { // ADD calculations here
     const summaryRef = doc(db, `artifacts/${appId}/daily_summaries`, summaryId);
     return updateDoc(summaryRef, {
         status: 'pending',
         submittedAt: serverTimestamp(),
+        // NEW: Save the calculated reconciliation data
+        reconciliation: {
+            totalKgSold: calculations.totalKgSold,
+            calculatedRevenue: calculations.calculatedRevenue,
+            actualRevenue: calculations.actualRevenue,
+            discrepancy: calculations.discrepancy,
+            totalExpenses: calculations.totalExpenses,
+        }
     });
 };
 
@@ -251,6 +261,64 @@ export const addDailySummary = (summaryData, user) => {
 };
 
 
+/**
+ * Migrates a single daily summary record from CSV into individual 'sale' and 'expense' documents.
+ * This ensures all transactions, live or historical, are in a single collection.
+ * @param {object} summaryData - A single row from the CSV.
+ * @param {object} user - The user performing the migration.
+ * @param {string} branchId - The validated Firestore ID of the branch.
+ * @param {Date} date - The validated Date object for the summary.
+ * @returns {Promise} A promise for a batched write operation.
+ */
+export const migrateDailySummary = async (summaryData, user, branchId, date) => {
+    const batch = writeBatch(db);
+    const dataEntryCollection = collection(db, `artifacts/${appId}/data_entries`);
+
+    // Calculate total kilograms sold
+    const kgA = (parseFloat(summaryData.closingMeterA) || 0) - (parseFloat(summaryData.openingMeterA) || 0);
+    const kgB = (parseFloat(summaryData.closingMeterB) || 0) - (parseFloat(summaryData.openingMeterB) || 0);
+    const totalKgSold = kgA + kgB;
+    const totalRevenue = (parseFloat(summaryData.posAmount) || 0) + (parseFloat(summaryData.cashAmount) || 0);
+    
+    // Create a new document for the sales transaction
+    const saleRef = doc(dataEntryCollection);
+    batch.set(saleRef, {
+        type: 'sale',
+        branchId,
+        date,
+        kgSold: totalKgSold,
+        revenue: totalRevenue,
+        paymentMethod: 'Multiple', // Since we have POS and Cash amounts combined
+        status: 'approved',
+        submittedBy: { uid: user.uid, email: user.email },
+        submittedAt: serverTimestamp(),
+        reviewedBy: { uid: user.uid, email: user.email },
+        reviewedAt: serverTimestamp(),
+        isHistorical: true,
+    });
+
+    // Create a document for the expense, if it exists
+    if (summaryData.expenseDescription && summaryData.expenseAmount) {
+        const expenseRef = doc(dataEntryCollection);
+        batch.set(expenseRef, {
+            type: 'expense',
+            branchId,
+            date,
+            description: summaryData.expenseDescription,
+            amount: parseFloat(summaryData.expenseAmount) || 0,
+            category: summaryData.expenseCategory || 'Other',
+            status: 'approved',
+            submittedBy: { uid: user.uid, email: user.email },
+            submittedAt: serverTimestamp(),
+            reviewedBy: { uid: user.uid, email: user.email },
+            reviewedAt: serverTimestamp(),
+            isHistorical: true,
+        });
+    }
+
+    return await batch.commit();
+};
+
 
 export const approveDailySummary = async (summaryId, entryIds, status, user) => {
     const batch = writeBatch(db);
@@ -295,33 +363,15 @@ export const getEntriesForDate = async (dateString) => {
 
 // --- Historical & Unified Data Functions ---
 
+/**
+ * DEPRECATED: This function is no longer needed as all approved data will be in 'data_entries'.
+ * @returns {Promise}
+ */
 export const getUnifiedFinancialData = async () => {
-    const entriesQuery = query(collection(db, `artifacts/${appId}/data_entries`), where("status", "==", "approved"));
-    const entriesSnapshot = await getDocs(entriesQuery);
-    const liveEntries = entriesSnapshot.docs.map(doc => doc.data());
-
-    const summariesQuery = query(collection(db, `artifacts/${appId}/daily_summaries`), where("status", "==", "approved"));
-    const summariesSnapshot = await getDocs(summariesQuery);
-    const historicalSummaries = summariesSnapshot.docs.map(doc => doc.data());
-
-    const unifiedData = [];
-    liveEntries.forEach(entry => {
-        if (entry.type === 'sale') unifiedData.push({ type: 'sale', date: entry.date, revenue: entry.revenue, kgSold: entry.kgSold, branchId: entry.branchId, source: 'live' });
-        else if (entry.type === 'expense') unifiedData.push({ type: 'expense', date: entry.date, amount: entry.amount, branchId: entry.branchId, source: 'live' });
-    });
-
-    historicalSummaries.forEach(summary => {
-        if (summary.sales && summary.sales.totalRevenue > 0) {
-            const kgA = (summary.meters.closingMeterA || 0) - (summary.meters.openingMeterA || 0);
-            const kgB = (summary.meters.closingMeterB || 0) - (summary.meters.openingMeterB || 0);
-            unifiedData.push({ type: 'sale', date: summary.date, revenue: summary.sales.totalRevenue, kgSold: kgA + kgB, branchId: summary.branchId, source: 'historical' });
-        }
-        if (summary.expenses && summary.expenses.length > 0) {
-            summary.expenses.forEach(expense => unifiedData.push({ type: 'expense', date: summary.date, amount: expense.amount, branchId: summary.branchId, source: 'historical' }));
-        }
-    });
-    return unifiedData;
+    console.warn("getUnifiedFinancialData is deprecated. Use a direct query to 'data_entries' instead.");
+    return [];
 };
+
 
 export const addHistoricalEntry = (logData, user) => {
     const dataEntryRef = collection(db, `artifacts/${appId}/data_entries`);
@@ -529,6 +579,26 @@ export const getApprovedEntriesQuery = (branchId = 'all') => {
         queryConstraints.push(where("branchId", "==", branchId));
     }
     return query(collection(db, `artifacts/${appId}/data_entries`), ...queryConstraints);
+};
+
+/**
+ * Gets a query for pre-aggregated monthly financial reports.
+ * @returns {Query}
+ */
+export const getMonthlyReportsQuery = () => {
+    return query(
+        collection(db, `artifacts/${appId}/monthly_reports`),
+        orderBy('year', 'asc'),
+        orderBy('month', 'asc')
+    );
+};
+
+/**
+ * Gets a reference to the live bulk stock document.
+ * @returns {Query}
+ */
+export const getBulkStockQuery = () => {
+    return query(collection(db, `artifacts/${appId}/live_inventory`), where('docId', '==', 'bulk_stock'));
 };
 
 export const getTransactionHistoryQuery = (filters, lastDoc = null) => {

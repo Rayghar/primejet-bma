@@ -1,63 +1,41 @@
 // src/views/Dashboard.js
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useMemo } from 'react';
 import { collection, query, where } from 'firebase/firestore';
 import { db, appId } from '../api/firebase';
 import { useFirestoreQuery } from '../hooks/useFirestoreQuery';
-import { getUnifiedFinancialData, getStockInsQuery, getPlantsQuery } from '../api/firestoreService';
+// Correctly import new query functions
+import { getMonthlyReportsQuery, getBulkStockQuery, getPlantsQuery } from '../api/firestoreService';
 import { formatCurrency } from '../utils/formatters';
-import { logAppEvent } from '../services/loggingService';
 
 import PageTitle from '../components/shared/PageTitle';
 import StatCard from '../components/shared/StatCard';
 import Card from '../components/shared/Card';
+// Only import used icons
 import { TrendingUp, ShoppingCart, Truck, Factory } from 'lucide-react';
 
 export default function Dashboard() {
-    const [unifiedData, setUnifiedData] = useState([]);
-    const [kpiLoading, setKpiLoading] = useState(true);
-
-    const { docs: stockIns, loading: stockInsLoading } = useFirestoreQuery(getStockInsQuery());
+    const { docs: monthlyReports, loading: reportsLoading } = useFirestoreQuery(getMonthlyReportsQuery());
+    const { docs: bulkStock, loading: stockLoading } = useFirestoreQuery(getBulkStockQuery());
     const { docs: activeDeliveries, loading: deliveryLoading } = useFirestoreQuery(query(collection(db, `artifacts/${appId}/vans`), where("status", "==", "On Delivery")));
     const { docs: plants, loading: plantsLoading } = useFirestoreQuery(getPlantsQuery());
+    
+    const totalRevenue = useMemo(() => {
+        return monthlyReports.reduce((sum, report) => sum + report.totalRevenue, 0);
+    }, [monthlyReports]);
 
-    useEffect(() => {
-        const fetchData = async () => {
-            logAppEvent('DEBUG', 'Dashboard: Starting unified data fetch for KPIs.', { component: 'Dashboard' });
-            setKpiLoading(true);
-            try {
-                const data = await getUnifiedFinancialData();
-                setUnifiedData(data);
-                logAppEvent('DEBUG', `Dashboard: Unified data fetch complete. Found ${data.length} records.`, { recordCount: data.length });
-            } catch (error) {
-                logAppEvent('ERROR', 'Dashboard: Failed to fetch unified data.', { error: error.message, stack: error.stack });
-            } finally {
-                setKpiLoading(false);
-            }
-        };
-        fetchData();
-    }, []);
+    const totalKgSold = useMemo(() => {
+        return monthlyReports.reduce((sum, report) => sum + report.totalKgSold, 0);
+    }, [monthlyReports]);
 
-    const kpiData = useMemo(() => {
-        logAppEvent('DEBUG', 'Dashboard: Recalculating KPI data.', { component: 'Dashboard' });
-        const sales = unifiedData.filter(d => d.type === 'sale');
-        const totalRevenue = sales.reduce((sum, sale) => sum + sale.revenue, 0);
-        const totalKgSold = sales.reduce((sum, sale) => sum + sale.kgSold, 0);
-        
-        const totalStockIn = stockIns.reduce((sum, stock) => sum + (stock.quantityKg || 0), 0);
-        const currentStock = totalStockIn - totalKgSold;
-
-        return { totalRevenue, totalKgSold, currentStock };
-    }, [unifiedData, stockIns]);
-
-    const loading = kpiLoading || stockInsLoading || deliveryLoading || plantsLoading;
+    const loading = reportsLoading || stockLoading || deliveryLoading || plantsLoading;
 
     return (
         <>
             <PageTitle title="Executive Dashboard" subtitle="A real-time, unified overview of the PrimeJet business." />
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
-                <StatCard title="Total Revenue" value={loading ? '...' : formatCurrency(kpiData.totalRevenue)} icon={TrendingUp} color="green" />
-                <StatCard title="Bulk LPG Stock" value={loading ? '...' : `${Math.round(kpiData.currentStock).toLocaleString()} kg`} icon={Factory} color="indigo" />
-                <StatCard title="Total LPG Sold" value={loading ? '...' : `${Math.round(kpiData.totalKgSold).toLocaleString()} kg`} icon={ShoppingCart} color="blue" />
+                <StatCard title="Total Revenue" value={loading ? '...' : formatCurrency(totalRevenue)} icon={TrendingUp} color="green" />
+                <StatCard title="Bulk LPG Stock" value={loading ? '...' : `${Math.round(bulkStock[0]?.currentStock || 0).toLocaleString()} kg`} icon={Factory} color="indigo" />
+                <StatCard title="Total LPG Sold" value={loading ? '...' : `${Math.round(totalKgSold).toLocaleString()} kg`} icon={ShoppingCart} color="blue" />
                 <StatCard title="Active Deliveries" value={loading ? '...' : activeDeliveries.length} icon={Truck} color="purple" />
             </div>
             <Card>

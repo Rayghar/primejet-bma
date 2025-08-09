@@ -1,12 +1,11 @@
 // src/views/04-DataEntry/SalesLogForm.js
 import React, { useState } from 'react';
-import { addDataEntry } from '../../api/firestoreService';
+// addDataEntry is no longer directly used here, but kept for context if needed elsewhere
 import { generateRawBtReceipt, createRawBtLink } from '../../utils/rawbt';
 import Button from '../../components/shared/Button';
 import { Send } from 'lucide-react';
-// The Modal component import is removed as the form is now embedded directly
 
-export default function SalesLogForm({ user, plants, onSuccess, onError, dailySummaryId }) {
+export default function SalesLogForm({ user, plants, onPushToTable, onError }) {
     const initialState = { 
         kgSold: '', 
         revenue: '', 
@@ -15,17 +14,18 @@ export default function SalesLogForm({ user, plants, onSuccess, onError, dailySu
         date: new Date().toISOString().split('T')[0] 
     };
     const [formData, setFormData] = useState(initialState);
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false); // Renamed to isAddingToTable for clarity
 
     const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
     
-    const handleSubmit = async (e) => {
+    const handleAddAndPrint = async (e) => {
         e.preventDefault();
-        setIsSubmitting(true);
+        setIsSubmitting(true); // Indicate that we are processing
         try {
-            await addDataEntry({ ...formData, dailySummaryId }, user, 'sale');
-            onSuccess('Sales log submitted for approval!');
+            // Call the function passed from the parent to add this entry to the local state
+            onPushToTable(formData, 'sale');
 
+            // Generate and print receipt (this part remains the same)
             const receiptData = {
                 ...formData,
                 revenue: parseFloat(formData.revenue),
@@ -38,16 +38,16 @@ export default function SalesLogForm({ user, plants, onSuccess, onError, dailySu
             
             window.open(printLink, '_blank');
 
-            setFormData(initialState); // Reset form after successful submission
+            setFormData(initialState); // Reset form after successful processing
         } catch (error) {
-            onError(error.message || 'Failed to submit sales log.');
+            onError(error.message || 'Failed to add sales log or print receipt.');
         } finally {
             setIsSubmitting(false);
         }
     };
     
     return (
-        <form onSubmit={handleSubmit} className="space-y-4 p-4 border rounded-lg bg-white">
+        <form onSubmit={handleAddAndPrint} className="space-y-4 p-4 border rounded-lg bg-white">
             <h3 className="font-semibold text-gray-700">Log Customer Sale</h3>
             <div>
                 <label className="block text-sm font-medium">Branch</label>
@@ -73,7 +73,7 @@ export default function SalesLogForm({ user, plants, onSuccess, onError, dailySu
             </div>
             <div className="flex justify-end pt-2">
                 <Button type="submit" disabled={isSubmitting} icon={Send}>
-                    {isSubmitting ? 'Submitting...' : 'Log & Print Receipt'}
+                    {isSubmitting ? 'Adding...' : 'Add & Print Receipt'}
                 </Button>
             </div>
         </form>

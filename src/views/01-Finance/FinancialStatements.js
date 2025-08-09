@@ -1,10 +1,9 @@
 // src/views/01-Finance/FinancialStatements.js
-import React, { useState, useMemo, useEffect } from 'react';
-import { getUnifiedFinancialData, getAssetsQuery, getLoansQuery, getPlantsQuery } from '../../api/firestoreService';
+import React, { useState, useMemo } from 'react';
+import { getMonthlyReportsQuery, getAssetsQuery, getLoansQuery, getPlantsQuery } from '../../api/firestoreService';
 import { useFirestoreQuery } from '../../hooks/useFirestoreQuery';
 import { formatCurrency } from '../../utils/formatters';
 import { logAppEvent } from '../../services/loggingService';
-
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 
@@ -14,63 +13,37 @@ const CashFlowStatementDisplay = ({ data }) => { /* ... No changes ... */ };
 
 export default function FinancialStatements() {
     const [activeTab, setActiveTab] = useState('income');
-    const [unifiedData, setUnifiedData] = useState([]);
-    const [dataLoading, setDataLoading] = useState(true);
     const [selectedBranch, setSelectedBranch] = useState('all');
 
+    // Refactored to use pre-aggregated monthly data
+    const { docs: monthlyReports, loading: reportsLoading } = useFirestoreQuery(getMonthlyReportsQuery());
     const { docs: assets, loading: assetsLoading } = useFirestoreQuery(getAssetsQuery());
     const { docs: loans, loading: loansLoading } = useFirestoreQuery(getLoansQuery());
     const { docs: plants, loading: plantsLoading } = useFirestoreQuery(getPlantsQuery());
-
-    useEffect(() => {
-        const fetchData = async () => {
-            logAppEvent('DEBUG', 'FinancialStatements: Starting data fetch.', { component: 'FinancialStatements' });
-            setDataLoading(true);
-            try {
-                const data = await getUnifiedFinancialData();
-                setUnifiedData(data);
-                logAppEvent('DEBUG', `FinancialStatements: Data fetch complete. Found ${data.length} unified records.`, { recordCount: data.length });
-            } catch (error) {
-                logAppEvent('ERROR', 'FinancialStatements: Failed to fetch unified data.', { error: error.message, stack: error.stack });
-            } finally {
-                setDataLoading(false);
-            }
-        };
-        fetchData();
-    }, []);
-
+    
+    const loading = reportsLoading || assetsLoading || loansLoading || plantsLoading;
+    
     const financialData = useMemo(() => {
-        const filteredData = selectedBranch === 'all' ? unifiedData : unifiedData.filter(entry => entry.branchId === selectedBranch);
-        logAppEvent('DEBUG', `FinancialStatements: Filtered data for branch '${selectedBranch}'. ${filteredData.length} records remain.`, { selectedBranch, recordCount: filteredData.length });
-            
-        if (filteredData.length === 0 || assetsLoading || loansLoading) {
-            if (!assetsLoading && !loansLoading) {
-                 logAppEvent('WARN', 'FinancialStatements: Financial calculation skipped due to zero records or loading assets/loans.', { component: 'FinancialStatements' });
-            }
+        if (loading || !monthlyReports) {
             return null;
         }
-        
-        logAppEvent('DEBUG', 'FinancialStatements: Starting financial calculations.', { component: 'FinancialStatements' });
-        const monthlyTotals = {};
-        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
         const COGS_MARGIN = 0.773;
 
-        filteredData.forEach(entry => {
-            if (!entry.date || typeof entry.date.toDate !== 'function') return;
-            const date = entry.date.toDate();
-            const monthKey = `${date.getFullYear()}-${date.getMonth()}`;
-            if (!monthlyTotals[monthKey]) {
-                monthlyTotals[monthKey] = { label: `${monthNames[date.getMonth()]} '${String(date.getFullYear()).slice(2)}`, year: date.getFullYear(), month: date.getMonth(), revenue: 0, opCosts: 0 };
-            }
-            if (entry.type === 'sale') monthlyTotals[monthKey].revenue += entry.revenue;
-            else if (entry.type === 'expense') monthlyTotals[monthKey].opCosts += entry.amount;
-        });
-
-        const incomeData = Object.values(monthlyTotals).map(month => {
-            const cogs = month.revenue * COGS_MARGIN;
-            const grossProfit = month.revenue - cogs;
-            const netProfit = grossProfit - month.opCosts;
-            return { ...month, cogs, grossProfit, netProfit };
+        const incomeData = monthlyReports.map(month => {
+            const cogs = month.totalRevenue * COGS_MARGIN;
+            const grossProfit = month.totalRevenue - cogs;
+            const netProfit = grossProfit - month.totalExpenses;
+            return {
+                label: `${month.year}-${month.month}`, // Simplified label
+                year: month.year,
+                month: month.month,
+                revenue: month.totalRevenue,
+                opCosts: month.totalExpenses,
+                cogs,
+                grossProfit,
+                netProfit
+            };
         }).sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
 
         const incomeTotals = incomeData.reduce((acc, month) => {
@@ -101,15 +74,13 @@ export default function FinancialStatements() {
         
         const cashFlow = { operating: cashFromOps, investing: cashForInvesting, financing: cashFromFinancing, netCashFlow: netCashFlow };
         
-        logAppEvent('DEBUG', 'FinancialStatements: Financial data successfully calculated.', { result: 'OK' });
         return { incomeData, incomeTotals, balanceSheet, cashFlow };
 
-    }, [unifiedData, assets, loans, selectedBranch, assetsLoading, loansLoading]);
+    }, [monthlyReports, assets, loans, selectedBranch, assetsLoading, loansLoading]);
 
-    const loading = dataLoading || assetsLoading || loansLoading || plantsLoading;
 
     if (loading) {
-        return <PageTitle title="Financial Statements" subtitle="Loading and unifying financial data..." />;
+        return <PageTitle title="Financial Statements" subtitle="Loading financial data..." />;
     }
 
     return (

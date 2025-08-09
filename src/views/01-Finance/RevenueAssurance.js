@@ -1,8 +1,8 @@
 // src/views/01-Finance/RevenueAssurance.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useFirestoreQuery } from '../../hooks/useFirestoreQuery';
-import { getStockInsQuery } from '../../api/firestoreService';
-import { getUnifiedFinancialData } from '../../api/firestoreService';
+// The new unified query for all approved entries is used here
+import { getStockInsQuery, getApprovedEntriesQuery } from '../../api/firestoreService';
 import { formatCurrency, formatDate } from '../../utils/formatters';
 import { logAppEvent } from '../../services/loggingService';
 
@@ -10,42 +10,34 @@ import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 
 export default function RevenueAssurance() {
-    const { docs: batches, loading: batchesLoading, error } = useFirestoreQuery(getStockInsQuery());
-    const [unifiedData, setUnifiedData] = useState([]);
-    const [dataLoading, setDataLoading] = useState(true);
+    // Refactored to use useFirestoreQuery for all data sources
+    const { docs: batches, loading: batchesLoading, error: batchesError } = useFirestoreQuery(getStockInsQuery());
+    const { docs: allTransactions, loading: transactionsLoading, error: transactionsError } = useFirestoreQuery(getApprovedEntriesQuery());
 
     useEffect(() => {
-        if (error) logAppEvent('ERROR', 'RevenueAssurance: Failed to fetch stock batches.', { error });
-        
-        const fetchData = async () => {
-            setDataLoading(true);
-            try {
-                const data = await getUnifiedFinancialData();
-                setUnifiedData(data.filter(d => d.type === 'sale'));
-                logAppEvent('DEBUG', `RevenueAssurance: Data fetch complete. Found ${data.length} sales records.`, { recordCount: data.length });
-            } catch (err) {
-                logAppEvent('ERROR', 'RevenueAssurance: Failed to fetch unified sales data.', { error: err.message });
-            } finally {
-                setDataLoading(false);
-            }
-        };
-        fetchData();
-    }, [error]);
+        if (batchesError) logAppEvent('ERROR', 'RevenueAssurance: Failed to fetch stock batches.', { error: batchesError });
+        if (transactionsError) logAppEvent('ERROR', 'RevenueAssurance: Failed to fetch transactions.', { error: transactionsError });
+    }, [batchesError, transactionsError]);
 
+    const salesData = useMemo(() => {
+        // Filter for sales records from the unified data source
+        return allTransactions.filter(entry => entry.type === 'sale');
+    }, [allTransactions]);
+    
     const getBatchPerformance = (batch) => {
-        const expectedRevenue = batch.quantityKg * batch.targetSalePricePerKg;
+        const expectedRevenue = (batch.quantityKg || 0) * (batch.targetSalePricePerKg || 0);
         
-        // Find all sales linked to this batch
-        const actualSales = unifiedData.filter(sale => sale.batchId === batch.id);
-        const actualRevenue = actualSales.reduce((sum, sale) => sum + sale.revenue, 0);
+        // Find all sales linked to this batch, assuming the batchId is present
+        const actualSales = salesData.filter(sale => sale.batchId === batch.id);
+        const actualRevenue = actualSales.reduce((sum, sale) => sum + (sale.revenue || 0), 0);
         
         const deviation = expectedRevenue > 0 ? ((actualRevenue - expectedRevenue) / expectedRevenue) * 100 : 0;
-        const progress = (batch.quantityKg - batch.remainingKg) / batch.quantityKg * 100;
+        const progress = (batch.quantityKg - (batch.remainingKg || 0)) / (batch.quantityKg || 1) * 100;
 
         return { expectedRevenue, actualRevenue, deviation, progress };
     };
 
-    const loading = batchesLoading || dataLoading;
+    const loading = batchesLoading || transactionsLoading;
 
     return (
         <>
@@ -66,6 +58,8 @@ export default function RevenueAssurance() {
                         <tbody>
                             {loading ? (
                                 <tr><td colSpan="6" className="text-center p-8">Loading batch data...</td></tr>
+                            ) : batches.length === 0 ? (
+                                <tr><td colSpan="6" className="text-center p-8 text-gray-500">No stock purchase batches found.</td></tr>
                             ) : batches.map(batch => {
                                 const performance = getBatchPerformance(batch);
                                 return (

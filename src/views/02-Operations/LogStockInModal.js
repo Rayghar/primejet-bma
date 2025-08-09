@@ -1,18 +1,16 @@
 // src/views/02-Operations/LogStockInModal.js
 import React, { useState } from 'react';
-import { useAuth } from '../../hooks/useAuth';
 import { addStockIn } from '../../api/firestoreService';
 import Modal from '../../components/shared/Modal';
 import Button from '../../components/shared/Button';
 
-export default function LogStockInModal({ onClose, onSuccess }) {
-    const { user } = useAuth();
+export default function LogStockInModal({ onClose, onSuccess, user }) {
     const [formData, setFormData] = useState({
         quantityKg: '2500',
         supplier: 'Refinery',
         purchaseDate: new Date().toISOString().split('T')[0],
-        costPerKg: '', // NEW FIELD
-        targetSalePricePerKg: '', // NEW FIELD
+        costPerKg: '',
+        targetSalePricePerKg: '',
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -40,7 +38,6 @@ export default function LogStockInModal({ onClose, onSuccess }) {
                     <label className="block text-sm font-medium text-gray-700">Quantity (kg)</label>
                     <input type="number" name="quantityKg" value={formData.quantityKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required />
                 </div>
-                {/* NEW FIELDS ADDED HERE */}
                 <div className="grid grid-cols-2 gap-4">
                     <div>
                         <label className="block text-sm font-medium text-gray-700">Cost Price / kg (₦)</label>

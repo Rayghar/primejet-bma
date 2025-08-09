@@ -1,8 +1,7 @@
-// src/views/01-Finance/TaxCompliance.js (NEW)
-
+// src/views/01-Finance/TaxCompliance.js
 import React, { useMemo } from 'react';
 import { useFirestoreQuery } from '../../hooks/useFirestoreQuery';
-import { getApprovedEntriesQuery } from '../../api/firestoreService';
+import { getMonthlyReportsQuery } from '../../api/firestoreService';
 import { formatCurrency } from '../../utils/formatters';
 
 import PageTitle from '../../components/shared/PageTitle';
@@ -11,28 +10,25 @@ import Button from '../../components/shared/Button';
 import { Printer, FileText } from 'lucide-react';
 
 export default function TaxCompliance() {
-    const { docs: approvedEntries, loading } = useFirestoreQuery(getApprovedEntriesQuery());
+    const { docs: monthlyReports, loading } = useFirestoreQuery(getMonthlyReportsQuery());
 
     const taxData = useMemo(() => {
-        if (!approvedEntries) return null;
+        if (!monthlyReports || monthlyReports.length === 0) return null;
 
-        const totals = approvedEntries.reduce((acc, entry) => {
-            if (entry.type === 'sale') {
-                acc.totalRevenue += entry.revenue;
-            } else if (entry.type === 'expense') {
-                acc.totalExpenses += entry.amount;
-            }
+        const totals = monthlyReports.reduce((acc, report) => {
+            acc.totalRevenue += report.totalRevenue;
+            acc.totalExpenses += report.totalExpenses;
             return acc;
         }, { totalRevenue: 0, totalExpenses: 0 });
 
-        const VAT_RATE = 0.075; // 7.5%
+        const VAT_RATE = 0.075;
         const vatPayable = totals.totalRevenue * VAT_RATE;
 
         return {
             ...totals,
             vatPayable,
         };
-    }, [approvedEntries]);
+    }, [monthlyReports]);
 
     const handlePrint = () => {
         window.print();
@@ -42,7 +38,9 @@ export default function TaxCompliance() {
         return <PageTitle title="Tax Compliance Report" subtitle="Loading financial data..." />;
     }
 
-    if (!taxData) return <p>Could not calculate tax data.</p>;
+    if (!taxData) {
+        return <p>Could not calculate tax data. Please ensure you have sales and expense records in the system.</p>;
+    }
 
     return (
         <>
@@ -73,7 +71,6 @@ export default function TaxCompliance() {
 
             <Card id="print-section">
                 <div className="p-4 md:p-8">
-                    {/* Report Header */}
                     <div className="flex justify-between items-start mb-8">
                         <div>
                             <h2 className="text-3xl font-bold text-gray-800">PrimeJet Gas LLC</h2>
@@ -85,8 +82,6 @@ export default function TaxCompliance() {
                             <p className="text-sm text-gray-500">For Period Ending: {new Date().toLocaleDateString('en-GB')}</p>
                         </div>
                     </div>
-
-                    {/* Report Body */}
                     <div className="space-y-4">
                         <div className="flex justify-between items-center bg-gray-50 p-4 rounded-lg">
                             <span className="font-medium text-gray-600">Total Revenue (Gross)</span>
@@ -101,16 +96,12 @@ export default function TaxCompliance() {
                             <span className="font-bold text-lg text-blue-800">{formatCurrency(taxData.vatPayable)}</span>
                         </div>
                     </div>
-
-                    {/* Pioneer Status Note */}
                     <div className="mt-8 p-4 bg-green-50 border-l-4 border-green-500 rounded-r-lg">
                         <h4 className="font-bold text-green-800">Pioneer Status Eligibility</h4>
                         <p className="text-sm text-green-700 mt-1">
                             As a company with Pioneer Status, PrimeJet Gas LLC is eligible for a 0% Corporate Income Tax rate for the initial period. This report is provided for VAT and other compliance records.
                         </p>
                     </div>
-
-                    {/* Footer */}
                     <div className="mt-12 pt-4 border-t text-center text-xs text-gray-400">
                         <p>Generated on {new Date().toString()}</p>
                         <p>This is a system-generated document from the PrimeJet Business Management Application.</p>

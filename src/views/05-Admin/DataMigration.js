@@ -1,7 +1,7 @@
 // src/views/05-Admin/DataMigration.js
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { addDailySummary, addHistoricalEntry, getPlantsQuery } from '../../api/firestoreService';
+import { addDailySummary, migrateDailySummary, getPlantsQuery } from '../../api/firestoreService';
 import { useFirestoreQuery } from '../../hooks/useFirestoreQuery';
 import Papa from 'papaparse';
 import { logAppEvent } from '../../services/loggingService';
@@ -14,7 +14,7 @@ import Notification from '../../components/shared/Notification';
 import { UploadCloud, PlusCircle, Trash2, FileUp } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
 
-// --- BulkUpload Component (for individual sales) ---
+/// --- BulkUpload Component ---
 const BulkUpload = ({ user, plants, onSuccess, onError }) => {
     const [isUploading, setIsUploading] = useState(false);
 
@@ -30,16 +30,10 @@ const BulkUpload = ({ user, plants, onSuccess, onError }) => {
             complete: async (results) => {
                 try {
                     const records = results.data;
-                    logAppEvent('INFO', `DataMigration: Parsed ${records.length} daily summary records from CSV.`, { recordCount: records.length });
                     const batch = [];
-                    
-                    // --- Loop through each record and process it ---
+
                     for (const record of records) {
-                        // Skip records that are completely empty
-                        if (Object.values(record).every(value => !value)) {
-                            logAppEvent('WARN', 'DataMigration: Skipping a completely empty row in CSV.');
-                            continue;
-                        }
+                        if (Object.values(record).every(value => !value)) continue;
 
                         const plant = plants.find(p => p.name?.toLowerCase() === record.branchName?.toLowerCase());
                         if (!plant) {
@@ -52,35 +46,11 @@ const BulkUpload = ({ user, plants, onSuccess, onError }) => {
                             logAppEvent('ERROR', `DataMigration: Skipping record with invalid date format: "${record.date}"`, { record });
                             continue;
                         }
-
-                        const summaryData = {
-                            date: summaryDate,
-                            branchId: plant.id,
-                            cashierName: record.cashierName || user.email,
-                            openingMeterA: parseFloat(record.openingMeterA) || 0,
-                            closingMeterA: parseFloat(record.closingMeterA) || 0,
-                            openingMeterB: parseFloat(record.openingMeterB) || 0,
-                            closingMeterB: parseFloat(record.closingMeterB) || 0,
-                            pricePerKg: parseFloat(record.pricePerKg) || 0,
-                            posAmount: parseFloat(record.posAmount) || 0,
-                            cashAmount: parseFloat(record.cashAmount) || 0,
-                            expenses: [],
-                            status: 'approved',
-                        };
-
-                        if (record.expenseDescription && record.expenseAmount) {
-                            summaryData.expenses.push({
-                                description: record.expenseDescription,
-                                amount: parseFloat(record.expenseAmount) || 0,
-                                category: record.expenseCategory || 'Other',
-                                date: summaryDate,
-                            });
-                        }
                         
-                        batch.push(addDailySummary(summaryData, user));
+                        // New logic: Use migrateDailySummary to process the record
+                        batch.push(migrateDailySummary(record, user, plant.id, summaryDate));
                     }
                     
-                    // --- Process the valid records in a single batch ---
                     await Promise.all(batch);
                     onSuccess(`${batch.length} historical daily summaries uploaded successfully!`);
                 } catch (error) {
@@ -109,7 +79,7 @@ const BulkUpload = ({ user, plants, onSuccess, onError }) => {
                     <FileUp size={20} className="mr-2" />
                     {isUploading ? 'Uploading...' : 'Choose CSV File'}
                 </div>
-                <input id="csv-upload" type="file" accept=".csv" onChange={handleFileUpload} className="hidden" disabled={isUploading} />
+                <input id="csv-upload" type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
             </label>
         </div>
     );

@@ -1,7 +1,7 @@
 // src/views/02-Operations/Inventory.js
 import React, { useState, useMemo, useEffect } from 'react';
 import { useFirestoreQuery } from '../../hooks/useFirestoreQuery';
-import { getStockInsQuery, getUnifiedFinancialData, getCylindersQuery, addCylinder, deleteCylinder } from '../../api/firestoreService';
+import { getBulkStockQuery, getCylindersQuery, addCylinder, deleteCylinder } from '../../api/firestoreService';
 
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
@@ -53,29 +53,20 @@ const AddCylinderForm = ({ onSuccess, onError }) => {
 export default function Inventory() {
     const [showStockInModal, setShowStockInModal] = useState(false);
     const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
-    const [unifiedData, setUnifiedData] = useState([]);
-    const [dataLoading, setDataLoading] = useState(true);
-
-    const { docs: stockIns, loading: stockInsLoading } = useFirestoreQuery(getStockInsQuery());
+    
+    // Refactored to query a single, real-time bulk stock document
+    const { docs: bulkStockDoc, loading: stockLoading } = useFirestoreQuery(getBulkStockQuery());
     const { docs: cylinders, loading: cylindersLoading } = useFirestoreQuery(getCylindersQuery());
+    
+    const currentBulkStock = bulkStockDoc.length > 0 ? bulkStockDoc[0].currentStock : 0;
+    const maxCapacity = 20000; // Use a fixed capacity or fetch it from a config doc
 
-    useEffect(() => {
-        const fetchData = async () => {
-            setDataLoading(true);
-            const data = await getUnifiedFinancialData();
-            setUnifiedData(data);
-            setDataLoading(false);
-        };
-        fetchData();
-    }, []);
+    const loading = stockLoading || cylindersLoading;
 
-    const inventoryData = useMemo(() => {
-        const totalStockIn = stockIns.reduce((sum, entry) => sum + (entry.quantityKg || 0), 0);
-        const totalStockOut = unifiedData.filter(d => d.type === 'sale').reduce((sum, log) => sum + (log.kgSold || 0), 0);
-        const currentBulkStock = totalStockIn - totalStockOut;
-        const maxCapacity = Math.max(totalStockIn, 20000);
-        return { bulkStock: { current: currentBulkStock, percentage: maxCapacity > 0 ? (currentBulkStock / maxCapacity) * 100 : 0 } };
-    }, [unifiedData, stockIns]);
+    const bulkStockData = useMemo(() => ({
+        current: currentBulkStock,
+        percentage: (currentBulkStock / maxCapacity) * 100,
+    }), [currentBulkStock]);
     
     const handleSuccess = (message) => setNotification({ show: true, message, type: 'success' });
     const handleError = (msg) => setNotification({ show: true, message: msg, type: 'error' });
@@ -86,8 +77,6 @@ export default function Inventory() {
             handleSuccess(`Cylinder batch "${cylinderName}" removed.`);
         }
     };
-
-    const loading = dataLoading || stockInsLoading || cylindersLoading;
 
     return (
         <>
@@ -103,7 +92,7 @@ export default function Inventory() {
                 <div className="lg:col-span-1">
                     <Card className="flex flex-col items-center justify-center">
                         <h3 className="text-lg font-semibold text-gray-700 mb-4">Bulk LPG Stock</h3>
-                        {loading ? <p>Calculating...</p> : <StockGauge percentage={inventoryData.bulkStock.percentage} stockKg={inventoryData.bulkStock.current} />}
+                        {loading ? <p>Calculating...</p> : <StockGauge percentage={bulkStockData.percentage} stockKg={bulkStockData.current} />}
                     </Card>
                 </div>
                 

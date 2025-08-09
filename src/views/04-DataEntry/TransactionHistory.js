@@ -1,3 +1,4 @@
+// src/views/04-DataEntry/TransactionHistory.js
 import React, { useState } from 'react';
 import { useFirestoreQuery } from '../../hooks/useFirestoreQuery';
 import { getTransactionHistoryQuery, getPlantsQuery } from '../../api/firestoreService';
@@ -48,7 +49,7 @@ export default function TransactionHistory() {
 
     const { docs: plants } = useFirestoreQuery(getPlantsQuery());
     const query = getTransactionHistoryQuery(filters, lastDoc);
-    const { docs: transactions, loading } = useFirestoreQuery(query);
+    const { docs: transactions, loading } = useFirestoreQuery(query, queryKey);
 
     const handleFilterChange = (e) => {
         setFilters({ ...filters, [e.target.name]: e.target.value });
@@ -56,11 +57,10 @@ export default function TransactionHistory() {
 
     const handleSearch = (e) => {
         e.preventDefault();
-        setLastDoc(null); // Reset pagination on new search
-        setQueryKey(Date.now()); // Force a re-fetch with new filters
+        setLastDoc(null);
+        setQueryKey(Date.now());
     };
     
-    // Rerunning the query with `lastDoc` will get the next page
     const handleNextPage = () => {
         if (transactions.length > 0) {
             setLastDoc(transactions[transactions.length - 1]);
@@ -68,9 +68,6 @@ export default function TransactionHistory() {
         }
     };
     
-    // A more complex implementation would handle previous pages
-    // For now, this is a basic "next" pagination.
-
     return (
         <>
             {selectedTransaction && <TransactionDetailModal transaction={selectedTransaction} onClose={() => setSelectedTransaction(null)} />}
