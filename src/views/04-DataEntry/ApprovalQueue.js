@@ -11,7 +11,8 @@ import { approveDailySummary } from '../../api/firestoreService';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
-import { ThumbsUp, ThumbsDown } from 'lucide-react';
+// FIX: Removed duplicate import of ThumbsUp and ThumbsDown
+import { ThumbsUp, ThumbsDown, FileText } from 'lucide-react';
 import Modal from '../../components/shared/Modal'; // Import Modal for detail view
 
 const SummaryDetailModal = ({ summary, onClose }) => (
