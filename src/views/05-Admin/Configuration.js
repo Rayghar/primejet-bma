@@ -1,7 +1,7 @@
 // src/views/05-Admin/Configuration.js
 import React, { useState, useEffect } from 'react';
-import { getConfiguration, updateConfiguration, getPlantsQuery, addPlant, deletePlant } from '../../api/firestoreService';
-import { useFirestoreQuery } from '../../hooks/useFirestoreQuery';
+import { getConfiguration, updateConfiguration } from '../../api/configService';
+import { getPlants, addPlant, deletePlant } from '../../api/operationsService'; // Imports should now resolve
 
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
@@ -11,7 +11,7 @@ import { Save, PlusCircle, Trash2, Factory } from 'lucide-react';
 
 // --- Add Plant Form Component ---
 const AddPlantForm = ({ onSuccess, onError }) => {
-    const [formData, setFormData] = useState({ name: '', capacity: '2500', status: 'Online' });
+    const [formData, setFormData] = useState({ name: '', capacity: '2500', status: 'Operational' });
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -24,12 +24,12 @@ const AddPlantForm = ({ onSuccess, onError }) => {
         }
         setIsSubmitting(true);
         try {
-            await addPlant(formData);
+            await addPlant({ ...formData, capacity: parseFloat(formData.capacity) });
             onSuccess(`Plant "${formData.name}" added successfully!`);
-            setFormData({ name: '', capacity: '2500', status: 'Online' }); // Reset form
+            setFormData({ name: '', capacity: '2500', status: 'Operational' });
         } catch (error) {
-            console.error("Error adding plant:", error);
-            onError('Failed to add plant.');
+            console.error("Add Plant Error:", error);
+            onError(error.response?.data?.message || 'Failed to add plant.');
         } finally {
             setIsSubmitting(false);
         }
@@ -37,127 +37,265 @@ const AddPlantForm = ({ onSuccess, onError }) => {
 
     return (
         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-            <div className="md:col-span-1">
-                <label className="block text-sm font-medium">Plant Name</label>
-                <input type="text" name="name" value={formData.name} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g., Ikeja Plant" required />
-            </div>
-            <div className="md:col-span-1">
-                <label className="block text-sm font-medium">Capacity (kg)</label>
-                <input type="number" name="capacity" value={formData.capacity} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required />
-            </div>
-            <div className="md:col-span-1">
-                <Button type="submit" disabled={isSubmitting} icon={PlusCircle} className="w-full">
-                    {isSubmitting ? 'Adding...' : 'Add Plant'}
-                </Button>
-            </div>
+            <input type="text" name="name" value={formData.name} onChange={handleChange} placeholder="Plant Name (e.g., Ikeja Plant)" className="w-full p-2 border rounded-md" required />
+            <input type="number" name="capacity" value={formData.capacity} onChange={handleChange} placeholder="Capacity (kg)" className="w-full p-2 border rounded-md" required />
+            <select name="status" value={formData.status} onChange={handleChange} className="w-full p-2 border rounded-md bg-white">
+                <option value="Operational">Operational</option>
+                <option value="Maintenance">Maintenance</option>
+                <option value="Offline">Offline</option>
+            </select>
+            <Button type="submit" disabled={isSubmitting} icon={PlusCircle} className="w-full">Add Plant</Button>
         </form>
     );
 };
 
-
-// --- Main Configuration View Component ---
+// --- Main Configuration View ---
 export default function Configuration() {
-    const [settings, setSettings] = useState({ lowStockThreshold: '', taxRateVAT: '' });
+    const [settings, setSettings] = useState(null);
+    const [plants, setPlants] = useState([]);
     const [loading, setLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
 
-    // Fetch plants data
-    const { docs: plants, loading: plantsLoading } = useFirestoreQuery(getPlantsQuery());
+    const fetchData = async () => {
+        setLoading(true);
+        try {
+            const [configData, plantData] = await Promise.all([
+                getConfiguration(),
+                getPlants(),
+            ]);
+            setSettings(configData);
+            setPlants(plantData);
+        } catch (error) {
+            console.error('Failed to fetch configuration data:', error);
+            handleError('Failed to load configuration.');
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
-        const fetchConfig = async () => {
-            setLoading(true);
-            const config = await getConfiguration();
-            setSettings(config);
-            setLoading(false);
-        };
-        fetchConfig();
-    }, []);
+        fetchData();
+    }, [fetchData]); // Added fetchData to dependency array
 
     const handleSettingsChange = (e) => {
-        setSettings({ ...settings, [e.target.name]: parseFloat(e.target.value) || 0 });
+        const { name, value, type, checked } = e.target;
+        if (name.includes('.')) {
+            const [parent, child] = name.split('.');
+            setSettings(prev => ({
+                ...prev,
+                [parent]: {
+                    ...prev[parent],
+                    [child]: type === 'checkbox' ? checked : parseFloat(value) || value
+                }
+            }));
+        } else {
+            setSettings(prev => ({
+                ...prev,
+                [name]: type === 'checkbox' ? checked : parseFloat(value) || value
+            }));
+        }
     };
 
     const handleSaveSettings = async () => {
         setIsSaving(true);
         try {
             await updateConfiguration(settings);
-            setNotification({ show: true, message: 'Settings saved successfully!', type: 'success' });
+            handleSuccess('Configuration settings saved successfully!');
         } catch (error) {
-            console.error("Error saving settings:", error);
-            setNotification({ show: true, message: 'Failed to save settings.', type: 'error' });
+            console.error('Failed to save configuration:', error);
+            handleError(error.response?.data?.message || 'Failed to save settings.');
         } finally {
             setIsSaving(false);
         }
     };
 
     const handleRemovePlant = async (plantId, plantName) => {
-        if (window.confirm(`Are you sure you want to remove the plant "${plantName}"? This action cannot be undone.`)) {
+        if (window.confirm(`Are you sure you want to remove plant "${plantName}"? This action cannot be undone.`)) {
             try {
                 await deletePlant(plantId);
-                setNotification({ show: true, message: `Plant "${plantName}" removed.`, type: 'success' });
+                handleSuccess(`Plant "${plantName}" removed.`);
             } catch (error) {
-                console.error("Error removing plant:", error);
-                setNotification({ show: true, message: 'Failed to remove plant.', type: 'error' });
+                console.error("Remove Plant Error:", error);
+                handleError(error.response?.data?.message || 'Failed to remove plant.');
             }
         }
     };
-    
-    const handleSuccess = (message) => setNotification({ show: true, message, type: 'success' });
-    const handleError = (message) => setNotification({ show: true, message, type: 'error' });
+
+    const handleSuccess = (message) => {
+        setNotification({ show: true, message, type: 'success' });
+        fetchData();
+    };
+    const handleError = (msg) => setNotification({ show: true, message, type: 'error' });
 
     return (
         <>
             <Notification notification={notification} setNotification={setNotification} />
-            <PageTitle title="Admin Configuration Panel" subtitle="Manage application-wide settings and plant locations." />
+            <PageTitle title="Application Configuration" subtitle="Manage global settings and operational parameters." />
 
-            {/* Plant Management Section */}
-            <Card className="mb-6">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center"><Factory className="mr-2" /> Plant Management</h3>
-                <div className="mb-6">
-                    <AddPlantForm onSuccess={handleSuccess} onError={handleError} />
-                </div>
-                <div className="space-y-2">
-                    {plantsLoading ? <p>Loading plants...</p> : plants.map(plant => (
-                        <div key={plant.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-md">
-                            <div>
-                                <p className="font-medium">{plant.name}</p>
-                                <p className="text-xs text-gray-500">Capacity: {plant.capacity} kg</p>
+            {loading ? (
+                <p>Loading configuration data...</p>
+            ) : (
+                <>
+                    <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-4 flex items-center"><Factory className="mr-3" /> Plant Management</h3>
+                    <Card className="mb-6">
+                        <h4 className="text-lg font-semibold text-gray-700 mb-4">Existing Plants</h4>
+                        {plants.length > 0 ? (
+                            <div className="overflow-x-auto mb-4">
+                                <table className="w-full text-left">
+                                    <thead>
+                                        <tr className="border-b bg-gray-50">
+                                            <th className="p-2">Name</th>
+                                            <th className="p-2">Capacity (kg)</th>
+                                            <th className="p-2">Status</th>
+                                            <th className="p-2">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {plants.map(plant => (
+                                            <tr key={plant.id} className="border-b hover:bg-gray-50">
+                                                <td className="p-2 font-medium">{plant.name}</td>
+                                                <td className="p-2">{plant.capacity}</td>
+                                                <td className="p-2">{plant.status}</td>
+                                                <td className="p-2">
+                                                    <Button onClick={() => handleRemovePlant(plant.id, plant.name)} variant="danger" icon={Trash2} title="Remove Plant" />
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
                             </div>
-                            <Button onClick={() => handleRemovePlant(plant.id, plant.name)} variant="danger" icon={Trash2} />
-                        </div>
-                    ))}
-                </div>
-            </Card>
+                        ) : (
+                            <p className="text-gray-500 mb-4">No plants configured yet.</p>
+                        )}
+                        <h4 className="text-lg font-semibold text-gray-700 mb-4 border-t pt-4">Add New Plant</h4>
+                        <AddPlantForm onSuccess={handleSuccess} onError={handleError} />
+                    </Card>
 
-            {/* General Settings Section */}
-            <Card>
-                <h3 className="text-lg font-semibold text-gray-800">General Settings</h3>
-                {loading ? <p>Loading settings...</p> : (
-                    <>
-                        <div className="space-y-6 mt-4">
-                            {/* Inventory Settings */}
+                    <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-4">Global Application Settings</h3>
+                    <Card>
+                        <div className="space-y-6">
                             <div>
-                                <label className="block text-sm font-medium text-gray-700">Low Stock Alert Threshold (kg)</label>
-                                <p className="text-xs text-gray-500 mb-1">Set the bulk LPG level that triggers a low stock warning.</p>
+                                <label className="block text-sm font-medium text-gray-700">Low Stock Threshold (kg)</label>
+                                <p className="text-xs text-gray-500 mb-1">Alerts will be triggered when bulk LPG stock falls below this level.</p>
                                 <input
                                     type="number"
                                     name="lowStockThreshold"
-                                    value={settings.lowStockThreshold}
+                                    value={settings?.lowStockThreshold || ''}
                                     onChange={handleSettingsChange}
                                     className="p-2 border rounded-md w-full md:w-1/2"
                                 />
                             </div>
-                            {/* Financial Settings */}
+
                             <div className="border-t pt-6">
+                                <h4 className="text-lg font-semibold text-gray-700 mb-4">Financial Settings</h4>
                                 <label className="block text-sm font-medium text-gray-700">VAT Rate (%)</label>
                                 <p className="text-xs text-gray-500 mb-1">Set the Value-Added Tax rate for tax compliance reports.</p>
                                 <input
                                     type="number"
-                                    name="taxRateVAT"
+                                    name="feeSettings.vatPercentage"
                                     step="0.1"
-                                    value={settings.taxRateVAT}
+                                    value={settings?.feeSettings?.vatPercentage || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                                <label className="block text-sm font-medium text-gray-700 mt-4">Service Fee Percentage (%)</label>
+                                <p className="text-xs text-gray-500 mb-1">Percentage applied as a service charge on orders.</p>
+                                <input
+                                    type="number"
+                                    name="feeSettings.serviceFeePercentage"
+                                    step="0.1"
+                                    value={settings?.feeSettings?.serviceFeePercentage || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                                <label className="block text-sm font-medium text-gray-700 mt-4">Base Delivery Fee (₦)</label>
+                                <p className="text-xs text-gray-500 mb-1">Standard delivery charge for all orders.</p>
+                                <input
+                                    type="number"
+                                    name="feeSettings.baseDeliveryFee"
+                                    value={settings?.feeSettings?.baseDeliveryFee || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                                <label className="block text-sm font-medium text-gray-700 mt-4">Express Delivery Surcharge (₦)</label>
+                                <p className="text-xs text-gray-500 mb-1">Additional fee for express delivery option.</p>
+                                <input
+                                    type="number"
+                                    name="feeSettings.expressDeliverySurcharge"
+                                    value={settings?.feeSettings?.expressDeliverySurcharge || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                                <label className="block text-sm font-medium text-gray-700 mt-4">Share Capital (₦)</label>
+                                <p className="text-xs text-gray-500 mb-1">The company's initial share capital for financial statements.</p>
+                                <input
+                                    type="number"
+                                    name="financialSettings.shareCapital"
+                                    value={settings?.financialSettings?.shareCapital || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                            </div>
+
+                            <div className="border-t pt-6">
+                                <h4 className="text-lg font-semibold text-gray-700 mb-4">Routing Settings</h4>
+                                <label className="block text-sm font-medium text-gray-700">Max Pickup Window (Minutes)</label>
+                                <p className="text-xs text-gray-500 mb-1">Maximum time a driver has to pick up an order after assignment.</p>
+                                <input
+                                    type="number"
+                                    name="routingSettings.maxPickupWindowMinutes"
+                                    value={settings?.routingSettings?.maxPickupWindowMinutes || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                                <label className="block text-sm font-medium text-gray-700 mt-4">Max Batch Weight (Kg)</label>
+                                <p className="text-xs text-gray-500 mb-1">Maximum total weight for a single delivery run batch.</p>
+                                <input
+                                    type="number"
+                                    name="routingSettings.maxBatchWeightKg"
+                                    value={settings?.routingSettings?.maxBatchWeightKg || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                            </div>
+
+                            <div className="border-t pt-6">
+                                <h4 className="text-lg font-semibold text-gray-700 mb-4">Referral Program Settings</h4>
+                                <div className="flex items-center mb-2">
+                                    <input
+                                        type="checkbox"
+                                        name="referralProgram.isActive"
+                                        checked={settings?.referralProgram?.isActive || false}
+                                        onChange={handleSettingsChange}
+                                        className="h-4 w-4 text-blue-600 border-gray-300 rounded"
+                                    />
+                                    <label className="ml-2 block text-sm font-medium text-gray-700">Program Active</label>
+                                </div>
+                                <label className="block text-sm font-medium text-gray-700 mt-2">Reward Amount (Kobo)</label>
+                                <p className="text-xs text-gray-500 mb-1">Amount rewarded to referrer (e.g., 50000 for N500).</p>
+                                <input
+                                    type="number"
+                                    name="referralProgram.rewardAmountKobo"
+                                    value={settings?.referralProgram?.rewardAmountKobo || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                                <label className="block text-sm font-medium text-gray-700 mt-4">Min Referee Purchase Amount (Kobo)</label>
+                                <p className="text-xs text-gray-500 mb-1">Minimum first purchase amount for referee to trigger reward.</p>
+                                <input
+                                    type="number"
+                                    name="referralProgram.minRefereePurchaseAmountKobo"
+                                    value={settings?.referralProgram?.minRefereePurchaseAmountKobo || ''}
+                                    onChange={handleSettingsChange}
+                                    className="p-2 border rounded-md w-full md:w-1/2"
+                                />
+                                <label className="block text-sm font-medium text-gray-700 mt-4">Referrer Min Successful Referrals</label>
+                                <p className="text-xs text-gray-500 mb-1">Number of successful referrals needed for referrer to start earning.</p>
+                                <input
+                                    type="number"
+                                    name="referralProgram.referrerMinSuccessfulReferrals"
+                                    value={settings?.referralProgram?.referrerMinSuccessfulReferrals || ''}
                                     onChange={handleSettingsChange}
                                     className="p-2 border rounded-md w-full md:w-1/2"
                                 />
@@ -169,9 +307,9 @@ export default function Configuration() {
                                 {isSaving ? 'Saving...' : 'Save Settings'}
                             </Button>
                         </div>
-                    </>
-                )}
-            </Card>
+                    </Card>
+                </>
+            )}
         </>
     );
 }

@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
-import { useFirestoreQuery } from '../../hooks/useFirestoreQuery';
-import { getTransactionHistoryQuery, getPlantsQuery } from '../../api/firestoreService';
+// src/views/04-DataEntry/TransactionHistory.js
+import React, { useState, useEffect } from 'react';
+import { getTransactionHistory } from '../../api/dataEntryService'; // Import the new service function
+import { getPlants } from '../../api/operationsService'; // Import to get plant list for dropdown
 import { formatCurrency, formatDate } from '../../utils/formatters';
 
 import PageTitle from '../../components/shared/PageTitle';
@@ -9,6 +10,7 @@ import Button from '../../components/shared/Button';
 import Modal from '../../components/shared/Modal';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
 
+// --- TransactionDetailModal Sub-component ---
 const TransactionDetailModal = ({ transaction, onClose }) => {
     return (
         <Modal title="Transaction Details" onClose={onClose}>
@@ -29,47 +31,84 @@ const TransactionDetailModal = ({ transaction, onClose }) => {
                         <p><strong>Category:</strong> {transaction.category}</p>
                     </>
                 )}
-                <p><strong>Submitted By:</strong> {transaction.submittedBy?.email}</p>
+                <p><strong>Submitted By:</strong> {transaction.submittedBy?.email || 'N/A'}</p>
+                {transaction.reviewedBy && <p><strong>Reviewed By:</strong> {transaction.reviewedBy?.email || 'N/A'}</p>}
+                {transaction.dailySummaryId && <p><strong>Daily Summary ID:</strong> {transaction.dailySummaryId}</p>}
             </div>
         </Modal>
     );
 };
 
+// --- Main TransactionHistory View Component ---
 export default function TransactionHistory() {
     const [filters, setFilters] = useState({
         branchId: 'all',
         type: 'all',
         startDate: '',
         endDate: '',
+        page: 1, // Current page number
+        limit: 25, // Items per page
     });
-    const [lastDoc, setLastDoc] = useState(null);
-    const [queryKey, setQueryKey] = useState(Date.now());
+    const [transactions, setTransactions] = useState([]);
+    const [loading, setLoading] = useState(true);
     const [selectedTransaction, setSelectedTransaction] = useState(null);
+    const [plants, setPlants] = useState([]); // State to hold plant list for dropdown
+    const [totalPages, setTotalPages] = useState(1);
+    const [totalTransactions, setTotalTransactions] = useState(0);
 
-    const { docs: plants } = useFirestoreQuery(getPlantsQuery());
-    const query = getTransactionHistoryQuery(filters, lastDoc);
-    const { docs: transactions, loading } = useFirestoreQuery(query);
+    // Fetch plants for the branch filter dropdown
+    useEffect(() => {
+        const fetchPlants = async () => {
+            try {
+                const plantList = await getPlants();
+                setPlants(plantList);
+            } catch (error) {
+                console.error('Failed to fetch plants for filter:', error);
+            }
+        };
+        fetchPlants();
+    }, []);
 
+    // Fetch transactions based on current filters
+    useEffect(() => {
+        const fetchTransactions = async () => {
+            setLoading(true);
+            try {
+                // Call the new getTransactionHistory service function
+                const result = await getTransactionHistory(filters);
+                setTransactions(result.transactions);
+                setTotalPages(result.totalPages);
+                setTotalTransactions(result.totalTransactions);
+            } catch (error) {
+                console.error('Failed to fetch transactions:', error);
+                // Optionally, set a notification or error state here
+            } finally {
+                setLoading(false);
+            }
+        };
+        fetchTransactions();
+    }, [filters]); // Re-fetch when filters change
+
+    // Handles changes to filter input fields.
     const handleFilterChange = (e) => {
-        setFilters({ ...filters, [e.target.name]: e.target.value });
+        setFilters(prev => ({ ...prev, [e.target.name]: e.target.value, page: 1 })); // Reset to page 1 on filter change
     };
 
+    // Handles search button click (re-fetches with current filters)
     const handleSearch = (e) => {
         e.preventDefault();
-        setLastDoc(null); // Reset pagination on new search
-        setQueryKey(Date.now()); // Force a re-fetch with new filters
+        setFilters(prev => ({ ...prev, page: 1 })); // Ensure page is reset to 1
     };
     
-    // Rerunning the query with `lastDoc` will get the next page
+    // Handles pagination: navigate to the next page
     const handleNextPage = () => {
-        if (transactions.length > 0) {
-            setLastDoc(transactions[transactions.length - 1]);
-            setQueryKey(Date.now());
-        }
+        setFilters(prev => ({ ...prev, page: prev.page + 1 }));
     };
-    
-    // A more complex implementation would handle previous pages
-    // For now, this is a basic "next" pagination.
+
+    // Handles pagination: navigate to the previous page
+    const handlePreviousPage = () => {
+        setFilters(prev => ({ ...prev, page: prev.page - 1 }));
+    };
 
     return (
         <>
@@ -78,32 +117,64 @@ export default function TransactionHistory() {
 
             <Card>
                 <form onSubmit={handleSearch} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end mb-6">
+                    {/* Branch Filter */}
                     <div>
-                        <label className="block text-sm font-medium">Branch</label>
-                        <select name="branchId" value={filters.branchId} onChange={handleFilterChange} className="mt-1 w-full p-2 border rounded-md bg-white">
+                        <label htmlFor="filter-branch" className="block text-sm font-medium">Branch</label>
+                        <select 
+                            id="filter-branch"
+                            name="branchId" 
+                            value={filters.branchId} 
+                            onChange={handleFilterChange} 
+                            className="mt-1 w-full p-2 border rounded-md bg-white"
+                        >
                             <option value="all">All Branches</option>
                             {plants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                         </select>
                     </div>
+                    {/* Type Filter */}
                     <div>
-                        <label className="block text-sm font-medium">Type</label>
-                        <select name="type" value={filters.type} onChange={handleFilterChange} className="mt-1 w-full p-2 border rounded-md bg-white">
+                        <label htmlFor="filter-type" className="block text-sm font-medium">Type</label>
+                        <select 
+                            id="filter-type"
+                            name="type" 
+                            value={filters.type} 
+                            onChange={handleFilterChange} 
+                            className="mt-1 w-full p-2 border rounded-md bg-white"
+                        >
                             <option value="all">All Types</option>
                             <option value="sale">Sale</option>
                             <option value="expense">Expense</option>
                         </select>
                     </div>
+                    {/* Start Date Filter */}
                     <div>
-                        <label className="block text-sm font-medium">Start Date</label>
-                        <input type="date" name="startDate" value={filters.startDate} onChange={handleFilterChange} className="mt-1 w-full p-2 border rounded-md" />
+                        <label htmlFor="filter-start-date" className="block text-sm font-medium">Start Date</label>
+                        <input 
+                            type="date" 
+                            id="filter-start-date"
+                            name="startDate" 
+                            value={filters.startDate} 
+                            onChange={handleFilterChange} 
+                            className="mt-1 w-full p-2 border rounded-md" 
+                        />
                     </div>
+                    {/* End Date Filter */}
                     <div>
-                        <label className="block text-sm font-medium">End Date</label>
-                        <input type="date" name="endDate" value={filters.endDate} onChange={handleFilterChange} className="mt-1 w-full p-2 border rounded-md" />
+                        <label htmlFor="filter-end-date" className="block text-sm font-medium">End Date</label>
+                        <input 
+                            type="date" 
+                            id="filter-end-date"
+                            name="endDate" 
+                            value={filters.endDate} 
+                            onChange={handleFilterChange} 
+                            className="mt-1 w-full p-2 border rounded-md" 
+                        />
                     </div>
+                    {/* Search Button */}
                     <Button type="submit" icon={Search}>Search</Button>
                 </form>
                 
+                {/* Transaction Table */}
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead>
@@ -122,10 +193,16 @@ export default function TransactionHistory() {
                                 transactions.map(entry => (
                                     <tr key={entry.id} className="border-b hover:bg-gray-50">
                                         <td className="p-4">{formatDate(entry.date)}</td>
-                                        <td className="p-4"><span className={`px-2 py-1 text-xs rounded-full ${entry.type === 'sale' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{entry.type}</span></td>
+                                        <td className="p-4">
+                                            <span className={`px-2 py-1 text-xs rounded-full ${entry.type === 'sale' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                                {entry.type}
+                                            </span>
+                                        </td>
                                         <td className="p-4">{entry.type === 'sale' ? `${entry.kgSold} kg (${entry.paymentMethod})` : entry.description}</td>
                                         <td className="p-4 text-right font-semibold">{formatCurrency(entry.revenue || entry.amount)}</td>
-                                        <td className="p-4"><Button onClick={() => setSelectedTransaction(entry)} variant="secondary" size="sm">View</Button></td>
+                                        <td className="p-4">
+                                            <Button onClick={() => setSelectedTransaction(entry)} variant="secondary" size="sm">View</Button>
+                                        </td>
                                     </tr>
                                 ))
                             ) : (
@@ -134,9 +211,26 @@ export default function TransactionHistory() {
                         </tbody>
                     </table>
                 </div>
-                <div className="flex justify-end mt-4 space-x-2">
-                    <Button onClick={() => {}} disabled={true} icon={ChevronLeft}>Previous</Button>
-                    <Button onClick={handleNextPage} disabled={transactions.length < 25 || loading} icon={ChevronRight}>Next</Button>
+
+                {/* Pagination Controls */}
+                <div className="flex justify-between items-center mt-4">
+                    <p className="text-sm text-gray-600">Showing {transactions.length} of {totalTransactions} transactions.</p>
+                    <div className="flex space-x-2">
+                        <Button 
+                            onClick={handlePreviousPage} 
+                            disabled={filters.page <= 1 || loading} 
+                            icon={ChevronLeft}
+                        >
+                            Previous
+                        </Button>
+                        <Button 
+                            onClick={handleNextPage} 
+                            disabled={filters.page >= totalPages || loading} 
+                            icon={ChevronRight}
+                        >
+                            Next
+                        </Button>
+                    </div>
                 </div>
             </Card>
         </>

@@ -1,18 +1,18 @@
 // src/views/02-Operations/LogStockInModal.js
 import React, { useState } from 'react';
-import { useAuth } from '../../hooks/useAuth';
-import { addStockIn } from '../../api/firestoreService';
+//import { useAuth } from '../../hooks/useAuth';
+import { addStockIn } from '../../api/inventoryService'; // Import from new inventory service
 import Modal from '../../components/shared/Modal';
 import Button from '../../components/shared/Button';
 
 export default function LogStockInModal({ onClose, onSuccess }) {
-    const { user } = useAuth();
+    //const { user } = useAuth();
     const [formData, setFormData] = useState({
-        quantityKg: '2500',
-        supplier: 'Refinery',
+        quantityKg: '',
+        supplier: '',
         purchaseDate: new Date().toISOString().split('T')[0],
-        costPerKg: '', // NEW FIELD
-        targetSalePricePerKg: '', // NEW FIELD
+        costPerKg: '',
+        targetSalePricePerKg: '',
     });
     const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -21,29 +21,42 @@ export default function LogStockInModal({ onClose, onSuccess }) {
     const handleSubmit = async (e) => {
         e.preventDefault();
         setIsSubmitting(true);
+
+        if (!formData.quantityKg || !formData.supplier || !formData.purchaseDate || !formData.costPerKg || !formData.targetSalePricePerKg) {
+            onSuccess('Please fill in all required fields.', 'error');
+            setIsSubmitting(false);
+            return;
+        }
+
         try {
-            await addStockIn(formData, user);
+            // Call the new addStockIn service function
+            await addStockIn({
+                ...formData,
+                quantityKg: parseFloat(formData.quantityKg),
+                costPerKg: parseFloat(formData.costPerKg),
+                targetSalePricePerKg: parseFloat(formData.targetSalePricePerKg),
+                // The backend will handle setting 'loggedBy' from req.user
+            });
             onSuccess(`Successfully logged a stock-in of ${formData.quantityKg} kg.`);
             onClose();
         } catch (error) {
             console.error("Stock-in Error:", error);
-            onSuccess('Failed to log stock-in.', 'error');
+            onSuccess(error.response?.data?.message || 'Failed to log stock-in.', 'error');
         } finally {
             setIsSubmitting(false);
         }
     };
 
     return (
-        <Modal title="Log Bulk LPG Purchase" onClose={onClose}>
+        <Modal title="Log New Stock-In" onClose={onClose}>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700">Quantity (kg)</label>
-                    <input type="number" name="quantityKg" value={formData.quantityKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required />
+                    <label className="block text-sm font-medium text-gray-700">Quantity (KG)</label>
+                    <input type="number" name="quantityKg" value={formData.quantityKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g., 2500" required />
                 </div>
-                {/* NEW FIELDS ADDED HERE */}
                 <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Cost Price / kg (₦)</label>
+                        <label className="block text-sm font-medium text-gray-700">Cost / kg (₦)</label>
                         <input type="number" name="costPerKg" value={formData.costPerKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g., 850" required />
                     </div>
                     <div>

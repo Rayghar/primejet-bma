@@ -1,73 +1,32 @@
 // src/api/authService.js
-import { onAuthStateChanged, signInWithEmailAndPassword } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db, appId } from './firebase';
+import httpClient from './httpClient';
 
 /**
- * Signs in a user with their email and password.
- * This is the function the login form will call.
+ * Logs in a user with email and password by sending a request to the Node.js backend.
  * @param {string} email - The user's email.
  * @param {string} password - The user's password.
- * @returns {Promise<UserCredential>} - A promise that resolves with the user credential.
+ * @returns {Promise<object>} The server response containing the JWT token and user data.
  */
-export const signInUser = async (email, password) => {
-    if (!email || !password) {
-        throw new Error("Email and password are required.");
-    }
-    return await signInWithEmailAndPassword(auth, email, password);
+const loginUser = async (email, password) => {
+  const { data } = await httpClient.post('/auth/login', { email, password });
+  return data;
 };
 
 /**
- * Fetches a user's profile from Firestore.
- * @param {string} uid - The user's unique ID.
- * @returns {object|null} - The user profile data or null.
+ * Fetches the profile of the currently authenticated user from the backend.
+ * This is used to hydrate the user state after a page refresh or initial load.
+ * @returns {Promise<object>} The user's profile data.
  */
-export const getUserProfile = async (uid) => {
-    const userDocRef = doc(db, `artifacts/${appId}/users`, uid);
-    const userDocSnap = await getDoc(userDocRef);
-    return userDocSnap.exists() ? userDocSnap.data() : null;
+const getMyProfile = async () => {
+  const { data } = await httpClient.get('/users/me');
+  return data;
 };
 
 /**
- * Creates a new user profile in Firestore.
- * @param {string} uid - The user's unique ID.
- * @param {string} email - The user's email.
- * @returns {object} - The newly created user profile data.
+ * Logs out the user by removing the JWT token from local storage.
  */
-export const createUserProfile = async (uid, email) => {
-    const userDocRef = doc(db, `artifacts/${appId}/users`, uid);
-    const newUserProfile = {
-        email,
-        role: 'Cashier', // Default role for new sign-ups
-        status: 'active',
-        createdAt: serverTimestamp(),
-    };
-    await setDoc(userDocRef, newUserProfile);
-    return newUserProfile;
+const logoutUser = () => {
+  localStorage.removeItem('token');
 };
 
-/**
- * Listens for changes to the user's authentication state.
- * @param {function} callback - The function to call with the user data.
- * @returns {function} - The unsubscribe function.
- */
-export const onAuthStateChangedListener = (callback) => {
-    return onAuthStateChanged(auth, async (user) => {
-        if (user && !user.isAnonymous) {
-            // This block only runs for named users (e.g., email/password)
-            const userProfile = await getUserProfile(user.uid);
-            if (userProfile) {
-                // If profile exists, combine auth data and profile data
-                callback({ ...user, ...userProfile });
-            } else {
-                // If a named user signs in for the first time and has no profile,
-                // create one with the default "Cashier" role.
-                const newUserProfile = await createUserProfile(user.uid, user.email);
-                callback({ ...user, ...newUserProfile });
-            }
-        } else {
-            // For anonymous users or when logged out, return null.
-            callback(null);
-        }
-    });
-};
+export { loginUser, getMyProfile, logoutUser };

@@ -1,6 +1,6 @@
 // src/components/shared/ErrorBoundary.js
 import React from 'react';
-import { logAppEvent } from '../../services/loggingService';
+// Removed: import { logAppEvent } from '../../services/loggingService'; // This service is no longer used directly
 
 class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -8,24 +8,21 @@ class ErrorBoundary extends React.Component {
         this.state = { hasError: false };
     }
 
-    // This lifecycle method is triggered when a descendant component throws an error.
     static getDerivedStateFromError(error) {
-        // Update state so the next render will show the fallback UI.
         return { hasError: true };
     }
 
-    // This lifecycle method is for logging the error information.
     componentDidCatch(error, errorInfo) {
-        logAppEvent('ERROR', 'Uncaught application error', {
-            message: error.message,
-            stack: error.stack,
-            componentStack: errorInfo.componentStack,
-        });
+        // console.error is sufficient for client-side errors in production,
+        // or integrate with a dedicated error logging service like Sentry (backend-side).
+        console.error('Uncaught application error:', error, errorInfo);
+        // If you want to send this to your backend, you'd make an API call here.
+        // E.g., if you had a logService.logClientError function:
+        // logService.logClientError('Uncaught Frontend Error', { message: error.message, stack: error.stack, componentStack: errorInfo.componentStack });
     }
 
     render() {
         if (this.state.hasError) {
-            // You can render any custom fallback UI
             return (
                 <div className="flex items-center justify-center h-screen bg-gray-100 text-center">
                     <div>
