@@ -1,8 +1,7 @@
 // src/views/05-Admin/Configuration.js
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { getConfiguration, updateConfiguration } from '../../api/configService';
-import { getPlants, addPlant, deletePlant } from '../../api/operationsService'; // Imports should now resolve
-
+import { getPlants, addPlant, deletePlant } from '../../api/operationsService';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
@@ -57,7 +56,16 @@ export default function Configuration() {
     const [isSaving, setIsSaving] = useState(false);
     const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
 
-    const fetchData = async () => {
+    const handleError = useCallback((msg) => {
+        setNotification({ show: true, message: msg, type: 'error' });
+    }, []);
+
+    const handleSuccess = useCallback((message) => {
+        setNotification({ show: true, message, type: 'success' });
+        fetchData();
+    }, []);
+
+    const fetchData = useCallback(async () => {
         setLoading(true);
         try {
             const [configData, plantData] = await Promise.all([
@@ -68,15 +76,16 @@ export default function Configuration() {
             setPlants(plantData);
         } catch (error) {
             console.error('Failed to fetch configuration data:', error);
-            handleError('Failed to load configuration.');
+            const errorMessage = error.response?.data?.message || error.message || 'Failed to load configuration.';
+            handleError(errorMessage);
         } finally {
             setLoading(false);
         }
-    };
+    }, [handleError]);
 
     useEffect(() => {
         fetchData();
-    }, [fetchData]); // Added fetchData to dependency array
+    }, [fetchData]);
 
     const handleSettingsChange = (e) => {
         const { name, value, type, checked } = e.target;
@@ -104,7 +113,8 @@ export default function Configuration() {
             handleSuccess('Configuration settings saved successfully!');
         } catch (error) {
             console.error('Failed to save configuration:', error);
-            handleError(error.response?.data?.message || 'Failed to save settings.');
+            const errorMessage = error.response?.data?.message || error.message || 'Failed to save settings.';
+            handleError(errorMessage);
         } finally {
             setIsSaving(false);
         }
@@ -117,199 +127,151 @@ export default function Configuration() {
                 handleSuccess(`Plant "${plantName}" removed.`);
             } catch (error) {
                 console.error("Remove Plant Error:", error);
-                handleError(error.response?.data?.message || 'Failed to remove plant.');
+                const errorMessage = error.response?.data?.message || error.message || 'Failed to remove plant.';
+                handleError(errorMessage);
             }
         }
     };
 
-    const handleSuccess = (message) => {
-        setNotification({ show: true, message, type: 'success' });
-        fetchData();
-    };
-    const handleError = (msg) => setNotification({ show: true, message, type: 'error' });
+    if (loading) {
+        return <p>Loading configuration data...</p>;
+    }
 
     return (
         <>
             <Notification notification={notification} setNotification={setNotification} />
             <PageTitle title="Application Configuration" subtitle="Manage global settings and operational parameters." />
 
-            {loading ? (
-                <p>Loading configuration data...</p>
-            ) : (
-                <>
-                    <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-4 flex items-center"><Factory className="mr-3" /> Plant Management</h3>
-                    <Card className="mb-6">
-                        <h4 className="text-lg font-semibold text-gray-700 mb-4">Existing Plants</h4>
-                        {plants.length > 0 ? (
-                            <div className="overflow-x-auto mb-4">
-                                <table className="w-full text-left">
-                                    <thead>
-                                        <tr className="border-b bg-gray-50">
-                                            <th className="p-2">Name</th>
-                                            <th className="p-2">Capacity (kg)</th>
-                                            <th className="p-2">Status</th>
-                                            <th className="p-2">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {plants.map(plant => (
-                                            <tr key={plant.id} className="border-b hover:bg-gray-50">
-                                                <td className="p-2 font-medium">{plant.name}</td>
-                                                <td className="p-2">{plant.capacity}</td>
-                                                <td className="p-2">{plant.status}</td>
-                                                <td className="p-2">
-                                                    <Button onClick={() => handleRemovePlant(plant.id, plant.name)} variant="danger" icon={Trash2} title="Remove Plant" />
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        ) : (
-                            <p className="text-gray-500 mb-4">No plants configured yet.</p>
-                        )}
-                        <h4 className="text-lg font-semibold text-gray-700 mb-4 border-t pt-4">Add New Plant</h4>
-                        <AddPlantForm onSuccess={handleSuccess} onError={handleError} />
-                    </Card>
+            <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-4 flex items-center"><Factory className="mr-3" /> Plant Management</h3>
+            <Card className="mb-6">
+                <h4 className="text-lg font-semibold text-gray-700 mb-4">Existing Plants</h4>
+                {plants.length > 0 ? (
+                    <div className="overflow-x-auto mb-4">
+                        <table className="w-full text-left">
+                            <thead>
+                                <tr className="border-b bg-gray-50">
+                                    <th className="p-2">Name</th>
+                                    <th className="p-2">Capacity (kg)</th>
+                                    <th className="p-2">Status</th>
+                                    <th className="p-2">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {plants.map(plant => (
+                                    <tr key={plant.id} className="border-b hover:bg-gray-50">
+                                        <td className="p-2 font-medium">{plant.name}</td>
+                                        <td className="p-2">{plant.capacity}</td>
+                                        <td className="p-2">{plant.status}</td>
+                                        <td className="p-2">
+                                        <Button onClick={() => handleRemovePlant(plant.id, plant.name)} variant="danger" icon={Trash2} title="Remove Plant" />
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                ) : (
+                    <p className="text-gray-500 mb-4">No plants configured yet.</p>
+                )}
+                <h4 className="text-lg font-semibold text-gray-700 mb-4 border-t pt-4">Add New Plant</h4>
+                <AddPlantForm onSuccess={handleSuccess} onError={handleError} />
+            </Card>
 
-                    <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-4">Global Application Settings</h3>
-                    <Card>
-                        <div className="space-y-6">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700">Low Stock Threshold (kg)</label>
-                                <p className="text-xs text-gray-500 mb-1">Alerts will be triggered when bulk LPG stock falls below this level.</p>
-                                <input
-                                    type="number"
-                                    name="lowStockThreshold"
-                                    value={settings?.lowStockThreshold || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                            </div>
+            <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-4">Global Application Settings</h3>
+            <Card>
+                <div className="space-y-6">
+                    <div>
+                        <label className="block text-sm font-medium text-gray-700">Low Stock Threshold (kg)</label>
+                        <p className="text-xs text-gray-500 mb-1">Alerts will be triggered when bulk LPG stock falls below this level.</p>
+                        <input
+                            type="number"
+                            name="lowStockThreshold"
+                            value={settings?.lowStockThreshold || ''}
+                            onChange={handleSettingsChange}
+                            className="p-2 border rounded-md w-full md:w-1/2"
+                        />
+                    </div>
 
-                            <div className="border-t pt-6">
-                                <h4 className="text-lg font-semibold text-gray-700 mb-4">Financial Settings</h4>
-                                <label className="block text-sm font-medium text-gray-700">VAT Rate (%)</label>
-                                <p className="text-xs text-gray-500 mb-1">Set the Value-Added Tax rate for tax compliance reports.</p>
-                                <input
-                                    type="number"
-                                    name="feeSettings.vatPercentage"
-                                    step="0.1"
-                                    value={settings?.feeSettings?.vatPercentage || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                                <label className="block text-sm font-medium text-gray-700 mt-4">Service Fee Percentage (%)</label>
-                                <p className="text-xs text-gray-500 mb-1">Percentage applied as a service charge on orders.</p>
-                                <input
-                                    type="number"
-                                    name="feeSettings.serviceFeePercentage"
-                                    step="0.1"
-                                    value={settings?.feeSettings?.serviceFeePercentage || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                                <label className="block text-sm font-medium text-gray-700 mt-4">Base Delivery Fee (₦)</label>
-                                <p className="text-xs text-gray-500 mb-1">Standard delivery charge for all orders.</p>
-                                <input
-                                    type="number"
-                                    name="feeSettings.baseDeliveryFee"
-                                    value={settings?.feeSettings?.baseDeliveryFee || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                                <label className="block text-sm font-medium text-gray-700 mt-4">Express Delivery Surcharge (₦)</label>
-                                <p className="text-xs text-gray-500 mb-1">Additional fee for express delivery option.</p>
-                                <input
-                                    type="number"
-                                    name="feeSettings.expressDeliverySurcharge"
-                                    value={settings?.feeSettings?.expressDeliverySurcharge || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                                <label className="block text-sm font-medium text-gray-700 mt-4">Share Capital (₦)</label>
-                                <p className="text-xs text-gray-500 mb-1">The company's initial share capital for financial statements.</p>
-                                <input
-                                    type="number"
-                                    name="financialSettings.shareCapital"
-                                    value={settings?.financialSettings?.shareCapital || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                            </div>
+                    <div className="border-t pt-6">
+                        <h4 className="text-lg font-semibold text-gray-700 mb-4">Financial Settings</h4>
+                        <label className="block text-sm font-medium text-gray-700">VAT Rate (%)</label>
+                        <p className="text-xs text-gray-500 mb-1">Set the Value-Added Tax rate for tax compliance reports.</p>
+                        <input
+                            type="number"
+                            name="feeSettings.vatPercentage"
+                            step="0.1"
+                            value={settings?.feeSettings?.vatPercentage || ''}
+                            onChange={handleSettingsChange}
+                            className="p-2 border rounded-md w-full md:w-1/2"
+                        />
+                        <label className="block text-sm font-medium text-gray-700 mt-4">Service Fee Percentage (%)</label>
+                        <p className="text-xs text-gray-500 mb-1">Percentage applied as a service charge on orders.</p>
+                        <input
+                            type="number"
+                            name="feeSettings.serviceFeePercentage"
+                            step="0.1"
+                            value={settings?.feeSettings?.serviceFeePercentage || ''}
+                            onChange={handleSettingsChange}
+                            className="p-2 border rounded-md w-full md:w-1/2"
+                        />
+                        <label className="block text-sm font-medium text-gray-700 mt-4">Base Delivery Fee (₦)</label>
+                        <p className="text-xs text-gray-500 mb-1">Standard delivery charge for all orders.</p>
+                        <input
+                            type="number"
+                            name="feeSettings.baseDeliveryFee"
+                            value={settings?.feeSettings?.baseDeliveryFee || ''}
+                            onChange={handleSettingsChange}
+                            className="p-2 border rounded-md w-full md:w-1/2"
+                        />
+                        <label className="block text-sm font-medium text-gray-700 mt-4">Express Delivery Surcharge (₦)</label>
+                        <p className="text-xs text-gray-500 mb-1">Additional fee for express delivery option.</p>
+                        <input
+                            type="number"
+                            name="feeSettings.expressDeliverySurcharge"
+                            value={settings?.feeSettings?.expressDeliverySurcharge || ''}
+                            onChange={handleSettingsChange}
+                            className="p-2 border rounded-md w-full md:w-1/2"
+                        />
+                        <label className="block text-sm font-medium text-gray-700 mt-4">Share Capital (₦)</label>
+                        <p className="text-xs text-gray-500 mb-1">The company's initial share capital for financial statements.</p>
+                        <input
+                            type="number"
+                            name="financialSettings.shareCapital"
+                            value={settings?.financialSettings?.shareCapital || ''}
+                            onChange={handleSettingsChange}
+                            className="p-2 border rounded-md w-full md:w-1/2"
+                        />
+                    </div>
 
-                            <div className="border-t pt-6">
-                                <h4 className="text-lg font-semibold text-gray-700 mb-4">Routing Settings</h4>
-                                <label className="block text-sm font-medium text-gray-700">Max Pickup Window (Minutes)</label>
-                                <p className="text-xs text-gray-500 mb-1">Maximum time a driver has to pick up an order after assignment.</p>
-                                <input
-                                    type="number"
-                                    name="routingSettings.maxPickupWindowMinutes"
-                                    value={settings?.routingSettings?.maxPickupWindowMinutes || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                                <label className="block text-sm font-medium text-gray-700 mt-4">Max Batch Weight (Kg)</label>
-                                <p className="text-xs text-gray-500 mb-1">Maximum total weight for a single delivery run batch.</p>
-                                <input
-                                    type="number"
-                                    name="routingSettings.maxBatchWeightKg"
-                                    value={settings?.routingSettings?.maxBatchWeightKg || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                            </div>
+                    <div className="border-t pt-6">
+                        <h4 className="text-lg font-semibold text-gray-700 mb-4">Routing Settings</h4>
+                        <label className="block text-sm font-medium text-gray-700">Max Pickup Window (Minutes)</label>
+                        <p className="text-xs text-gray-500 mb-1">Maximum time a driver has to pick up an order after assignment.</p>
+                        <input
+                            type="number"
+                            name="routingSettings.maxPickupWindowMinutes"
+                            value={settings?.routingSettings?.maxPickupWindowMinutes || ''}
+                            onChange={handleSettingsChange}
+                            className="p-2 border rounded-md w-full md:w-1/2"
+                        />
+                        <label className="block text-sm font-medium text-gray-700 mt-4">Max Batch Weight (kg)</label>
+                        <p className="text-xs text-gray-500 mb-1">Maximum total weight for a single delivery route batch.</p>
+                        <input
+                            type="number"
+                            name="routingSettings.maxBatchWeightKg"
+                            value={settings?.routingSettings?.maxBatchWeightKg || ''}
+                            onChange={handleSettingsChange}
+                            className="p-2 border rounded-md w-full md:w-1/2"
+                        />
+                    </div>
 
-                            <div className="border-t pt-6">
-                                <h4 className="text-lg font-semibold text-gray-700 mb-4">Referral Program Settings</h4>
-                                <div className="flex items-center mb-2">
-                                    <input
-                                        type="checkbox"
-                                        name="referralProgram.isActive"
-                                        checked={settings?.referralProgram?.isActive || false}
-                                        onChange={handleSettingsChange}
-                                        className="h-4 w-4 text-blue-600 border-gray-300 rounded"
-                                    />
-                                    <label className="ml-2 block text-sm font-medium text-gray-700">Program Active</label>
-                                </div>
-                                <label className="block text-sm font-medium text-gray-700 mt-2">Reward Amount (Kobo)</label>
-                                <p className="text-xs text-gray-500 mb-1">Amount rewarded to referrer (e.g., 50000 for N500).</p>
-                                <input
-                                    type="number"
-                                    name="referralProgram.rewardAmountKobo"
-                                    value={settings?.referralProgram?.rewardAmountKobo || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                                <label className="block text-sm font-medium text-gray-700 mt-4">Min Referee Purchase Amount (Kobo)</label>
-                                <p className="text-xs text-gray-500 mb-1">Minimum first purchase amount for referee to trigger reward.</p>
-                                <input
-                                    type="number"
-                                    name="referralProgram.minRefereePurchaseAmountKobo"
-                                    value={settings?.referralProgram?.minRefereePurchaseAmountKobo || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                                <label className="block text-sm font-medium text-gray-700 mt-4">Referrer Min Successful Referrals</label>
-                                <p className="text-xs text-gray-500 mb-1">Number of successful referrals needed for referrer to start earning.</p>
-                                <input
-                                    type="number"
-                                    name="referralProgram.referrerMinSuccessfulReferrals"
-                                    value={settings?.referralProgram?.referrerMinSuccessfulReferrals || ''}
-                                    onChange={handleSettingsChange}
-                                    className="p-2 border rounded-md w-full md:w-1/2"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="flex justify-end mt-8 pt-4 border-t">
-                            <Button onClick={handleSaveSettings} disabled={isSaving} icon={Save}>
-                                {isSaving ? 'Saving...' : 'Save Settings'}
-                            </Button>
-                        </div>
-                    </Card>
-                </>
-            )}
+                    <div className="mt-6 pt-6 border-t">
+                        <Button onClick={handleSaveSettings} disabled={isSaving} icon={Save}>
+                            {isSaving ? 'Saving...' : 'Save Settings'}
+                        </Button>
+                    </div>
+                </div>
+            </Card>
         </>
     );
 }

@@ -1,93 +1,152 @@
 // src/api/dataEntryService.js
 import httpClient from './httpClient';
 
-/**
- * Logs a new sales transaction by sending data to the backend.
- * @param {object} saleData - The sales transaction data.
- * @returns {Promise<object>} The backend response.
- */
-const logSale = async (saleData) => {
-    const { data } = await httpClient.post('/data-entry/sales', saleData);
-    return data;
+// API endpoints for data entry
+const BASE_URL = '/data-entry';
+
+// Create or get daily summary for a branch
+// FIX: Changed function signature to match the calling code in DailyLog.js
+export const createOrGetDailySummary = async (branchId, cashierName, pricePerKg) => {
+    try {
+        const response = await httpClient.post(`${BASE_URL}/daily-summary`, { branchId, cashierName, pricePerKg });
+        return response.data;
+    } catch (error) {
+        console.error("API Error in createOrGetDailySummary:", error);
+        throw error;
+    }
 };
 
-/**
- * Logs a new expense by sending data to the backend.
- * @param {object} expenseData - The expense transaction data.
- * @returns {Promise<object>} The backend response.
- */
-const logExpense = async (expenseData) => {
-    const { data } = await httpClient.post('/data-entry/expenses', expenseData);
-    return data;
+export const updateSummaryMeters = async (summaryId, metersData) => {
+    try {
+        const response = await httpClient.put(`${BASE_URL}/daily-summary/${summaryId}/meters`, metersData);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in updateSummaryMeters:", error);
+        throw error;
+    }
 };
 
-/**
- * Submits a new end-of-day summary for approval.
- * @param {object} summaryData - The daily summary data.
- * @returns {Promise<object>} The backend response.
- */
-const addDailySummary = async (summaryData) => {
-    const { data } = await httpClient.post('/data-entry/daily-summary', summaryData);
-    return data;
+export const createSaleEntry = async (saleData) => {
+    try {
+        const response = await httpClient.post(`${BASE_URL}/sales`, saleData);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in createSaleEntry:", error);
+        throw error;
+    }
 };
 
-/**
- * Fetches a list of daily summaries that are pending approval.
- * @returns {Promise<Array<object>>} A list of pending summaries.
- */
-const getPendingSummaries = async () => {
-    const { data } = await httpClient.get('/data-entry/daily-summaries/pending');
-    return data;
+export const createExpenseEntry = async (expenseData) => {
+    try {
+        const response = await httpClient.post(`${BASE_URL}/expenses`, expenseData);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in createExpenseEntry:", error);
+        throw error;
+    }
 };
 
-/**
- * Updates the status of a specific daily summary.
- * @param {string} summaryId - The ID of the summary to update.
- * @param {string} status - The new status ('approved' or 'rejected').
- * @returns {Promise<object>} The backend response.
- */
-const updateSummaryStatus = async (summaryId, status) => {
-    const { data } = await httpClient.put(`/data-entry/daily-summaries/${summaryId}/status`, { status });
-    return data;
+export const getDailyEntries = async (summaryId) => {
+    try {
+        const response = await httpClient.get(`${BASE_URL}/daily-entries/${summaryId}`);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in getDailyEntries:", error);
+        throw error;
+    }
 };
 
-/**
- * Fetches the paginated transaction history with optional filters.
- * @param {object} filters - The query filters (e.g., { branchId, type, page, limit }).
- * @returns {Promise<object>} The paginated transaction history.
- */
-const getTransactionHistory = async (filters) => {
-    const { data } = await httpClient.get('/data-entry/transactions', { params: filters });
-    return data;
+export const finalizeDailySummary = async (summaryId) => {
+    try {
+        const response = await httpClient.put(`${BASE_URL}/daily-summary/${summaryId}/finalize`);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in finalizeDailySummary:", error);
+        throw error;
+    }
 };
 
-/**
- * Fetches a detailed end-of-day report for a specific daily summary ID.
- * @param {string} summaryId - The ID of the daily summary.
- * @returns {Promise<object>} The report data including summary, sales, expenses, and totals.
- */
-const getDailySummaryReport = async (summaryId) => {
-    const { data } = await httpClient.get(`/data-entry/daily-summaries/${summaryId}`);
-    return data;
+export const getDailySummaryReport = async (summaryId) => {
+    try {
+        const response = await httpClient.get(`${BASE_URL}/daily-summary/${summaryId}/report`);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in getDailySummaryReport:", error);
+        throw error;
+    }
 };
 
-/**
- * Fetches the in-progress daily summary for the current user and day.
- * @returns {Promise<object|null>} The in-progress summary or null if not found.
- */
-const getDailySummaryInProgress = async () => {
-    const { data } = await httpClient.get('/data-entry/daily-summaries/in-progress');
-    // The backend now returns null with a 200 OK status if no summary is found.
-    return data; 
+export const getPendingSummaries = async () => {
+    try {
+        const response = await httpClient.get(`${BASE_URL}/daily-summary/pending-approval`);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in getPendingSummaries:", error);
+        throw error;
+    }
 };
 
-export { 
-    logSale, 
-    logExpense, 
-    addDailySummary, 
-    getPendingSummaries, 
-    getTransactionHistory, 
-    updateSummaryStatus,
-    getDailySummaryReport,
-    getDailySummaryInProgress 
+export const updateSummaryStatus = async (summaryId, status, reason = null) => {
+    try {
+        let url = `${BASE_URL}/daily-summary/${summaryId}/${status}`;
+        let data = {};
+        if (reason) {
+            data.reason = reason;
+        }
+        const response = await httpClient.put(url, data);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in updateSummaryStatus:", error);
+        throw error;
+    }
+};
+
+export const getTransactionHistory = async (filters) => {
+    try {
+        const response = await httpClient.get(`${BASE_URL}/transaction-history`, { params: filters });
+        return response.data;
+    } catch (error) {
+        console.error("API Error in getTransactionHistory:", error);
+        throw error;
+    }
+};
+
+export const migrateDailySummaries = async (summaries) => {
+    try {
+        const response = await httpClient.post(`${BASE_URL}/migration/daily-summaries`, summaries);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in migrateDailySummaries:", error);
+        throw error;
+    }
+};
+
+export const migrateExpenseTransactions = async (expenses) => {
+    try {
+        const response = await httpClient.post(`${BASE_URL}/migration/expenses`, expenses);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in migrateExpenseTransactions:", error);
+        throw error;
+    }
+};
+
+export const getManagerSalesView = async () => {
+    try {
+        const response = await httpClient.get('/api/v2/financials/sales');
+        return response.data;
+    } catch (error) {
+        console.error("API Error in getManagerSalesView:", error);
+        throw error;
+    }
+};
+
+export const markCashPaidToBank = async (summaryId, data) => {
+    try {
+        const response = await httpClient.post(`/api/v2/financials/sales/${summaryId}/cash-paid`, data);
+        return response.data;
+    } catch (error) {
+        console.error("API Error in markCashPaidToBank:", error);
+        throw error;
+    }
 };
