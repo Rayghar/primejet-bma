@@ -1,6 +1,7 @@
 // src/components/charts/LineChart.js (NEW)
 
 import React from 'react';
+import Card from '../shared/Card';  // Add this import
 
 /**
  * A simple, dependency-free line chart component using SVG.

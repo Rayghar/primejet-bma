@@ -1,12 +1,12 @@
 // src/views/04-DataEntry/EndOfDayReportModal.js
 import React, { useState, useEffect } from 'react';
-import { getDailySummaryReport } from '../../api/dataEntryService'; // Import the new service function
+import { getDailySummaryReport } from '../../api/dataEntryService';
 import { formatDate, formatCurrency } from '../../utils/formatters';
 import Modal from '../../components/shared/Modal';
 import Button from '../../components/shared/Button';
 import { Printer } from 'lucide-react';
 
-export default function EndOfDayReportModal({ summaryId, date, onClose }) { // Accept summaryId instead of just date
+export default function EndOfDayReportModal({ summaryId, onClose }) {
     const [reportData, setReportData] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -14,30 +14,25 @@ export default function EndOfDayReportModal({ summaryId, date, onClose }) { // A
         const fetchReportData = async () => {
             setLoading(true);
             try {
-                // Fetch the detailed report from the backend using the summaryId
                 const data = await getDailySummaryReport(summaryId);
                 setReportData(data);
             } catch (error) {
-                console.error("Failed to fetch report data:", error);
-                // Optionally, set a notification or error state here
+                console.error('Failed to fetch report data:', error);
             } finally {
                 setLoading(false);
             }
         };
 
-        if (summaryId) { // Only fetch if summaryId is provided
-            fetchReportData();
-        } else {
-            setLoading(false); // If no summaryId, stop loading and show error
+        if (summaryId) fetchReportData();
+        else {
+            setLoading(false);
             setReportData(null);
         }
-    }, [summaryId]); // Re-fetch when summaryId changes
+    }, [summaryId]);
 
     const handlePrint = () => {
-        // Create a new window for printing to isolate content
         const printWindow = window.open('', '', 'height=600,width=800');
         printWindow.document.write('<html><head><title>Print Report</title>');
-        // Add basic print styles
         printWindow.document.write('<style>');
         printWindow.document.write(`
             body { font-family: sans-serif; margin: 20px; }
@@ -48,16 +43,46 @@ export default function EndOfDayReportModal({ summaryId, date, onClose }) { // A
             .summary-section p { margin-bottom: 5px; }
             .summary-section hr { border: 0; border-top: 1px dashed #ccc; margin: 10px 0; }
             .total-line { font-weight: bold; }
-            @media print {
-                .no-print { display: none !important; }
-            }
+            @media print { .no-print { display: none !important; } }
         `);
         printWindow.document.write('</style></head><body>');
-        
-        // Write the content to the new window
-        const reportContent = document.getElementById('report-content').innerHTML;
+
+        const reportContent = `
+            <div class="report-header">
+                <h1>PrimeJet Gas LLC</h1>
+                <h2>End-of-Day Summary</h2>
+                <p>Date: ${formatDate(reportData.summary.date)}</p>
+                <p>Branch: ${reportData.summary.branchId}</p>
+                <p>Cashier: ${reportData.summary.cashierName || 'N/A'}</p>
+            </div>
+            <hr />
+            <div class="summary-section">
+                <h3>Summary</h3>
+                <p>Total Revenue: <strong class="float-right">${formatCurrency(reportData.totals.totalRevenue)}</strong></p>
+                <p>Total LPG Sold: <strong class="float-right">${reportData.totals.totalKgSold.toLocaleString()} kg</strong></p>
+                <p>Total Expenses: <strong class="float-right">${formatCurrency(reportData.totals.totalExpenses)}</strong></p>
+            </div>
+            <hr />
+            <div class="summary-section">
+                <h3>Sales Details</h3>
+                ${reportData.sales.map(s => `<p>${s.kgSold} kg (${s.transactionType}) - <span class="float-right">${formatCurrency(s.amount)}</span></p>`).join('') || '<p>No sales recorded.</p>'}
+            </div>
+            <hr />
+            <div class="summary-section">
+                <h3>Expense Details</h3>
+                ${reportData.expenses.map(e => `<p>${e.description} (${e.category}) - <span class="float-right">${formatCurrency(e.amount)}</span></p>`).join('') || '<p>No expenses recorded.</p>'}
+            </div>
+            <hr />
+            <div class="summary-section">
+                <h3>Meter Readings</h3>
+                <p>Opening Meter A: <span class="float-right">${reportData.summary.openingMeters.meterA || 0} kg</span></p>
+                <p>Closing Meter A: <span class="float-right">${reportData.summary.closingMeters.meterA || 0} kg</span></p>
+                <p>Opening Meter B: <span class="float-right">${reportData.summary.openingMeters.meterB || 0} kg</span></p>
+                <p>Closing Meter B: <span class="float-right">${reportData.summary.closingMeters.meterB || 0} kg</span></p>
+                <p>Price Per Kg: <span class="float-right">${formatCurrency(reportData.summary.pricePerKg)}</span></p>
+            </div>
+        `;
         printWindow.document.write(reportContent);
-        
         printWindow.document.write('</body></html>');
         printWindow.document.close();
         printWindow.focus();
@@ -66,7 +91,7 @@ export default function EndOfDayReportModal({ summaryId, date, onClose }) { // A
     };
 
     return (
-        <Modal title={`End-of-Day Report for ${formatDate(reportData?.summary?.date || date)}`} onClose={onClose}>
+        <Modal title={`End-of-Day Report for ${formatDate(reportData?.summary?.date || new Date())}`} onClose={onClose}>
             {loading ? (
                 <p className="text-center p-8">Generating report...</p>
             ) : reportData ? (
@@ -76,42 +101,38 @@ export default function EndOfDayReportModal({ summaryId, date, onClose }) { // A
                             <h1>PrimeJet Gas LLC</h1>
                             <h2>End-of-Day Summary</h2>
                             <p>Date: {formatDate(reportData.summary.date)}</p>
-                            <p>Branch: {reportData.summary.branchId}</p> {/* Display branch ID, ideally would populate name */}
-                            <p>Cashier: {reportData.summary.cashierName || reportData.summary.submittedBy?.email || 'N/A'}</p>
+                            <p>Branch: {reportData.summary.branchId}</p>
+                            <p>Cashier: {reportData.summary.cashierName || 'N/A'}</p>
                         </div>
                         <hr />
-
                         <div className="summary-section">
                             <h3>Summary</h3>
                             <p>Total Revenue: <strong className="float-right">{formatCurrency(reportData.totals.totalRevenue)}</strong></p>
                             <p>Total LPG Sold: <strong className="float-right">{reportData.totals.totalKgSold.toLocaleString()} kg</strong></p>
                             <p>Total Expenses: <strong className="float-right">{formatCurrency(reportData.totals.totalExpenses)}</strong></p>
                         </div>
-                        
                         <hr />
                         <div className="summary-section">
                             <h3>Sales Details</h3>
                             {reportData.sales.length > 0 ? reportData.sales.map((s, i) => (
-                                <p key={`sale-${s.id || i}`}>{s.kgSold} kg ({s.paymentMethod}) - <span className="float-right">{formatCurrency(s.revenue)}</span></p>
+                                <p key={`sale-${s._id || i}`}>{s.kgSold} kg ({s.transactionType}) - <span className="float-right">{formatCurrency(s.amount)}</span></p>
                             )) : <p>No sales recorded.</p>}
                         </div>
-
                         <hr />
                         <div className="summary-section">
                             <h3>Expense Details</h3>
                             {reportData.expenses.length > 0 ? reportData.expenses.map((e, i) => (
-                                <p key={`exp-${e.id || i}`}>{e.description} ({e.category}) - <span className="float-right">{formatCurrency(e.amount)}</span></p>
+                                <p key={`exp-${e._id || i}`}>{e.description} ({e.category}) - <span className="float-right">{formatCurrency(e.amount)}</span></p>
                             )) : <p>No expenses recorded.</p>}
                         </div>
-
                         <hr />
                         <div className="summary-section">
                             <h3>Meter Readings</h3>
-                            <p>Opening Meter A: <span className="float-right">{reportData.summary.meters.openingMeterA} kg</span></p>
-                            <p>Closing Meter A: <span className="float-right">{reportData.summary.meters.closingMeterA} kg</span></p>
-                            <p>Opening Meter B: <span className="float-right">{reportData.summary.meters.openingMeterB} kg</span></p>
-                            <p>Closing Meter B: <span className="float-right">{reportData.summary.meters.closingMeterB} kg</span></p>
-                            <p>Price Per Kg: <span className="float-right">{formatCurrency(reportData.summary.meters.pricePerKg)}</span></p>
+                            <p>Opening Meter A: <span className="float-right">{reportData.summary.openingMeters.meterA || 0} kg</span></p>
+                            <p>Closing Meter A: <span className="float-right">{reportData.summary.closingMeters.meterA || 0} kg</span></p>
+                            <p>Opening Meter B: <span className="float-right">{reportData.summary.openingMeters.meterB || 0} kg</span></p>
+                            <p>Closing Meter B: <span className="float-right">{reportData.summary.closingMeters.meterB || 0} kg</span></p>
+                            <p>Price Per Kg: <span className="float-right">{formatCurrency(reportData.summary.pricePerKg)}</span></p>
                         </div>
                     </div>
                     <div className="flex justify-end pt-4 no-print">
