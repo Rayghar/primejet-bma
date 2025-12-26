@@ -1,0 +1,8 @@
+# pack-refs with: peeled fully-peeled sorted 
+fc17499b0d8c7a9f462b8ff6c9a81e541163f042 refs/heads/Interswitch-integration
+75e393c83af40c609ee1d3a79ab16d1e4502434f refs/heads/Opay-integration
+35242a15d7fd4be8f19f20bd029255b727d5bc6d refs/heads/bmaintegration
+fdfd6e8994928a063c134cc7a77e75c819843e12 refs/heads/flutterwave-integration
+d2f02bf756cdebfa364049e9cff76813b3a5329a refs/heads/main
+58be9982d499501a10459de77ec644072f467df2 refs/heads/monnify-integration
+fec37d78176d3fbf78519cecfb818a8bafffb1a6 refs/heads/paystack-integration

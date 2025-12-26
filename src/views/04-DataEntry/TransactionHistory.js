@@ -1,3 +1,4 @@
+// src/views/05-Reports/TransactionHistory.js
 import React, { useState, useEffect } from 'react';
 import { getTransactionHistory } from '../../api/dataEntryService';
 import { getPlants } from '../../api/operationsService';
@@ -68,7 +69,7 @@ const TransactionHistory = () => {
     return (
         <>
             <PageTitle title="Transaction History" subtitle="View and search all sales and expense records." />
-            {error && <Notification message={error} type="error" />}
+            {error && <Notification notification={{ show: true, message: error, type: 'error' }} setNotification={() => setError(null)} />}
 
             <Card className="mb-6">
                 <h3 className="text-lg font-semibold mb-4">Filters</h3>
@@ -99,7 +100,7 @@ const TransactionHistory = () => {
             <Card>
                 <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-gray-200">
-                        <thead>
+                        <thead className="bg-gray-50">
                             <tr>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
                                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
@@ -111,12 +112,13 @@ const TransactionHistory = () => {
                         <tbody className="bg-white divide-y divide-gray-200">
                             {transactions.length > 0 ? (
                                 transactions.map((tx) => (
-                                    <tr key={tx._id} className={tx.transactionType ? 'bg-green-50' : 'bg-red-50'}>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatDate(tx.createdAt, true)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{tx.transactionType ? 'Sale' : 'Expense'}</td>
+                                    <tr key={tx._id} className={tx.type === 'Sale' ? 'bg-green-50' : 'bg-red-50'}>
+                                        {/* FIX: Use the 'date' field for display, with a fallback to 'createdAt' */}
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatDate(tx.date || tx.createdAt, true)}</td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{tx.type}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{getBranchName(tx.branchId)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {tx.transactionType ? `${tx.kgSold?.toFixed(2) || 'N/A'} kg, ${tx.transactionType}` : tx.description}
+                                            {tx.type === 'Sale' ? `${tx.kgSold?.toFixed(2) || 'N/A'} kg, ${tx.transactionType}` : tx.description}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatCurrency(tx.amount)}</td>
                                     </tr>
