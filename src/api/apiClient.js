@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // ✅ Production Backend
-const BASE_URL = 'https://primejet-backend.onrender.com/api/v1';
+const BASE_URL = 'http://localhost:3000/api/v1' //https://primejet-backend.onrender.com/api/v1
 
 const apiClient = axios.create({
     baseURL: BASE_URL,

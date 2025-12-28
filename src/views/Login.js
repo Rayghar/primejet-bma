@@ -14,14 +14,16 @@ export default function Login() {
         setError('');
         setLoading(true);
         try {
+            console.log("🚀 [Login] Submitting credentials...");
             await login(email, password);
-            // ✅ CRITICAL FIX: Force a browser reload.
-            // This ensures the Socket connection initializes with the new token
-            // and the App Router picks up the user session cleanly.
-            window.location.reload(); 
+            console.log("✅ [Login] Success! Redirecting via State Update...");
+            
+            // NOTE: We do NOT reload the page here. 
+            // The AuthContext update will automatically trigger App.js to render the Dashboard.
+            // Adding reload() here causes the socket connection to break/flicker.
+            
         } catch (err) {
-            console.error("Login Error:", err);
-            // Extract error message safely
+            console.error("❌ [Login] Failed:", err);
             const msg = err.response?.data?.message || err.message || 'Authorization Failed';
             setError(msg);
         } finally {
