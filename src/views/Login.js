@@ -15,8 +15,15 @@ export default function Login() {
         setLoading(true);
         try {
             await login(email, password);
+            // ✅ CRITICAL FIX: Force a browser reload.
+            // This ensures the Socket connection initializes with the new token
+            // and the App Router picks up the user session cleanly.
+            window.location.reload(); 
         } catch (err) {
-            setError('Authorization Failed. Invalid Credentials.');
+            console.error("Login Error:", err);
+            // Extract error message safely
+            const msg = err.response?.data?.message || err.message || 'Authorization Failed';
+            setError(msg);
         } finally {
             setLoading(false);
         }
