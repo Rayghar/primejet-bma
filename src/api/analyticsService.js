@@ -1,38 +1,45 @@
-// src/api/analyticsService.js
-import httpClient from './httpClient';
+import apiClient from './apiClient';
 
-const getDashboardKpis = async () => {
-  const { data } = await httpClient.get('/analytics/dashboard-kpis');
-  return data;
+export const getDashboardKpis = async () => {
+    const res = await apiClient.get('/api/v2/analytics/dashboard-kpis');
+    return res.data;
 };
 
-const getSalesReport = async () => {
-  const { data } = await httpClient.get('/analytics/sales-report');
-  return data;
+export const getSalesReport = async (period = 'monthly') => {
+    const res = await apiClient.get('/api/v2/analytics/sales-report', { params: { period } });
+    return res.data;
 };
 
-// NEW: Fetch sales by payment method
-const getSalesByPaymentMethod = async () => {
-  const { data } = await httpClient.get('/analytics/sales-by-payment-method');
-  return data;
+// ✅ FIX: Alias this function so Dashboard.js can find it
+export const getSalesChartData = getSalesReport; 
+
+export const getSalesByPaymentMethod = async () => {
+    const res = await apiClient.get('/api/v2/analytics/sales-by-payment-method');
+    return res.data;
 };
 
-// NEW: Fetch sales by branch
-const getSalesByBranch = async () => {
-  const { data } = await httpClient.get('/analytics/sales-by-branch');
-  return data;
+export const getTopSellingProducts = async () => {
+    const res = await apiClient.get('/api/v2/analytics/top-selling-products');
+    return res.data;
 };
 
-// NEW: Fetch top-selling products
-const getTopSellingProducts = async () => {
-  const { data } = await httpClient.get('/analytics/top-selling-products');
-  return data;
+export const getHeatmapData = async () => {
+    const res = await apiClient.get('/orders', { 
+        params: { limit: 2000, fields: 'deliveryLatitude,deliveryLongitude,grandTotal' } 
+    });
+    return res.data.map(o => ({
+        lat: o.deliveryLatitude,
+        lng: o.deliveryLongitude,
+        weight: o.grandTotal
+    })).filter(p => p.lat && p.lng);
 };
 
-export { 
-  getDashboardKpis, 
-  getSalesReport,
-  getSalesByPaymentMethod, // Export new functions
-  getSalesByBranch,
-  getTopSellingProducts,
+export const getDriverPerformance = async (period = 'monthly') => {
+    const res = await apiClient.get('/api/v1/reports/driver-performance', { params: { period } });
+    return res.data;
+};
+
+export const getBusinessMetrics = async () => {
+    const res = await apiClient.get('/api/v2/analytics/business-metrics');
+    return res.data;
 };

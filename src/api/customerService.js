@@ -1,72 +1,50 @@
-// src/api/customerService.js
-import httpClient from './httpClient';
+import apiClient from './apiClient';
 
-/**
- * Fetches a list of all customers.
- * @returns {Promise<Array<object>>} An array of customer objects.
- */
-const getCustomers = async () => {
-  const { data } = await httpClient.get('/customers');
-  return data;
+export const getCustomers = async (search = '', page = 1) => {
+    const params = { page, limit: 20, search };
+    const res = await apiClient.get('/api/v2/customers', { params });
+    return res.data;
 };
 
-/**
- * Adds a new customer to the system.
- * @param {object} customerData - The data for the new customer.
- * @returns {Promise<object>} The newly created customer object.
- */
-const addCustomer = async (customerData) => {
-  const { data } = await httpClient.post('/customers', customerData);
-  return data.customer; // Assuming backend returns { message, customer }
+// ✅ ADDED
+export const addCustomer = async (customerData) => {
+    const res = await apiClient.post('/api/v2/customers', customerData);
+    return res.data;
 };
 
-/**
- * Fetches detailed information for a single customer.
- * @param {string} customerId - The ID of the customer.
- * @returns {Promise<object>} The detailed customer object.
- */
-const getCustomerDetails = async (customerId) => {
-  const { data } = await httpClient.get(`/customers/${customerId}`);
-  return data;
+export const getCustomerDetails = async (customerId) => {
+    const res = await apiClient.get(`/api/v2/customers/${customerId}`);
+    return res.data;
 };
 
-/**
- * Fetches a customer's order history.
- * @param {string} customerId - The ID of the customer.
- * @returns {Promise<Array<object>>} An array of order objects.
- */
-const getCustomerOrders = async (customerId) => {
-  const { data } = await httpClient.get(`/customers/${customerId}/orders`);
-  return data;
+export const getCustomerOrders = async (customerId) => {
+    const res = await apiClient.get(`/api/v2/customers/${customerId}/orders`);
+    return res.data;
 };
 
-/**
- * Adds a new note to a customer's profile.
- * @param {string} customerId - The ID of the customer.
- * @param {string} noteText - The content of the note.
- * @param {string} authorEmail - The email of the user adding the note.
- * @returns {Promise<object>} The newly created note object.
- */
-const addCustomerNote = async (customerId, noteText, authorEmail) => {
-  const { data } = await httpClient.post(`/customers/${customerId}/notes`, { text: noteText, authorEmail });
-  return data.note; // Assuming backend returns { message, note }
+// ✅ ADDED
+export const addCustomerNote = async (customerId, text, authorEmail) => {
+    const res = await apiClient.post(`/api/v2/customers/${customerId}/notes`, { text, authorEmail });
+    return res.data;
 };
 
-/**
- * Fetches all notes for a specific customer.
- * @param {string} customerId - The ID of the customer.
- * @returns {Promise<Array<object>>} An array of note objects.
- */
-const getCustomerNotes = async (customerId) => {
-  const { data } = await httpClient.get(`/customers/${customerId}/notes`);
-  return data;
+// ✅ ADDED
+export const getCustomerNotes = async (customerId) => {
+    const res = await apiClient.get(`/api/v2/customers/${customerId}/notes`);
+    return res.data;
 };
 
-export {
-  getCustomers,
-  addCustomer,
-  getCustomerDetails,
-  getCustomerOrders,
-  addCustomerNote,
-  getCustomerNotes,
+// Chat Support
+export const getActiveChatThreads = async () => {
+    const res = await apiClient.get('/api/v1/chat/threads?role=admin');
+    return res.data;
+};
+
+export const getChatHistory = async (chatId) => {
+    const res = await apiClient.get(`/api/v1/chat/${chatId}/history`);
+    return res.data;
+};
+
+export const sendMessage = async (chatId, text, recipientId) => {
+    return await apiClient.post('/api/v1/chat/message', { chatId, text, recipientId });
 };

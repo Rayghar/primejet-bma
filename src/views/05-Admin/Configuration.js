@@ -1,277 +1,184 @@
-// src/views/05-Admin/Configuration.js
-import React, { useState, useEffect, useCallback } from 'react';
-import { getConfiguration, updateConfiguration } from '../../api/configService';
-import { getPlants, addPlant, deletePlant } from '../../api/operationsService';
+import React, { useState, useEffect } from 'react';
+import apiClient from '../../api/apiClient';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
-import Notification from '../../components/shared/Notification';
-import { Save, PlusCircle, Trash2, Factory } from 'lucide-react';
+import Modal from '../../components/shared/Modal';
+import { Save, Sliders, Factory, PlusCircle, Trash2 } from 'lucide-react';
 
-// --- Add Plant Form Component ---
-const AddPlantForm = ({ onSuccess, onError }) => {
-    const [formData, setFormData] = useState({ name: '', capacity: '2500', status: 'Operational' });
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+// --- Sub-Component: Add Plant Modal ---
+const AddPlantModal = ({ onClose, onRefresh }) => {
+    const [form, setForm] = useState({ name: '', capacity: '', status: 'Operational', location: '' });
+    const [saving, setSaving] = useState(false);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!formData.name || !formData.capacity) {
-            onError('Plant name and capacity are required.');
-            return;
-        }
-        setIsSubmitting(true);
+        setSaving(true);
         try {
-            await addPlant({ ...formData, capacity: parseFloat(formData.capacity) });
-            onSuccess(`Plant "${formData.name}" added successfully!`);
-            setFormData({ name: '', capacity: '2500', status: 'Operational' });
-        } catch (error) {
-            console.error("Add Plant Error:", error);
-            onError(error.response?.data?.message || 'Failed to add plant.');
+            // Mapping to V2 Operations API
+            await apiClient.post('/api/v2/operations/plants', {
+                ...form,
+                capacity: parseFloat(form.capacity)
+            });
+            onRefresh();
+            onClose();
+        } catch (e) {
+            alert('Failed to add plant: ' + e.message);
         } finally {
-            setIsSubmitting(false);
+            setSaving(false);
         }
     };
 
     return (
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-            <input type="text" name="name" value={formData.name} onChange={handleChange} placeholder="Plant Name (e.g., Ikeja Plant)" className="w-full p-2 border rounded-md" required />
-            <input type="number" name="capacity" value={formData.capacity} onChange={handleChange} placeholder="Capacity (kg)" className="w-full p-2 border rounded-md" required />
-            <select name="status" value={formData.status} onChange={handleChange} className="w-full p-2 border rounded-md bg-white">
-                <option value="Operational">Operational</option>
-                <option value="Maintenance">Maintenance</option>
-                <option value="Offline">Offline</option>
-            </select>
-            <Button type="submit" disabled={isSubmitting} icon={PlusCircle} className="w-full">Add Plant</Button>
-        </form>
+        <Modal title="Add New Plant" onClose={onClose}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <input required placeholder="Plant Name (e.g. Lekki Branch)" value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="glass-input w-full p-3" />
+                <input required type="number" placeholder="Capacity (KG)" value={form.capacity} onChange={e => setForm({...form, capacity: e.target.value})} className="glass-input w-full p-3" />
+                <input placeholder="Location/Address" value={form.location} onChange={e => setForm({...form, location: e.target.value})} className="glass-input w-full p-3" />
+                <select value={form.status} onChange={e => setForm({...form, status: e.target.value})} className="glass-input w-full p-3 bg-slate-800">
+                    <option>Operational</option><option>Maintenance</option><option>Offline</option>
+                </select>
+                <div className="flex justify-end pt-4">
+                    <Button type="submit" disabled={saving}>{saving ? 'Saving...' : 'Create Plant'}</Button>
+                </div>
+            </form>
+        </Modal>
     );
 };
 
 // --- Main Configuration View ---
 export default function Configuration() {
-    const [settings, setSettings] = useState(null);
+    const [config, setConfig] = useState({});
     const [plants, setPlants] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [isSaving, setIsSaving] = useState(false);
-    const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
+    const [saving, setSaving] = useState(false);
+    const [showPlantModal, setShowPlantModal] = useState(false);
 
-    const handleError = useCallback((msg) => {
-        setNotification({ show: true, message: msg, type: 'error' });
-    }, []);
-
-    const handleSuccess = useCallback((message) => {
-        setNotification({ show: true, message, type: 'success' });
-        fetchData();
-    }, []);
-
-    const fetchData = useCallback(async () => {
-        setLoading(true);
+    const fetchData = async () => {
         try {
-            const [configData, plantData] = await Promise.all([
-                getConfiguration(),
-                getPlants(),
+            const [confRes, plantRes] = await Promise.all([
+                apiClient.get('/config'),
+                apiClient.get('/api/v2/operations/plants')
             ]);
-            setSettings(configData);
-            setPlants(plantData);
-        } catch (error) {
-            console.error('Failed to fetch configuration data:', error);
-            const errorMessage = error.response?.data?.message || error.message || 'Failed to load configuration.';
-            handleError(errorMessage);
+            setConfig(confRes.data);
+            setPlants(plantRes.data);
+        } catch (e) {
+            console.error(e);
         } finally {
             setLoading(false);
         }
-    }, [handleError]);
-
-    useEffect(() => {
-        fetchData();
-    }, [fetchData]);
-
-    const handleSettingsChange = (e) => {
-        const { name, value, type, checked } = e.target;
-        if (name.includes('.')) {
-            const [parent, child] = name.split('.');
-            setSettings(prev => ({
-                ...prev,
-                [parent]: {
-                    ...prev[parent],
-                    [child]: type === 'checkbox' ? checked : parseFloat(value) || value
-                }
-            }));
-        } else {
-            setSettings(prev => ({
-                ...prev,
-                [name]: type === 'checkbox' ? checked : parseFloat(value) || value
-            }));
-        }
     };
 
-    const handleSaveSettings = async () => {
-        setIsSaving(true);
+    useEffect(() => { fetchData(); }, []);
+
+    const handleSaveConfig = async () => {
+        setSaving(true);
         try {
-            await updateConfiguration(settings);
-            handleSuccess('Configuration settings saved successfully!');
-        } catch (error) {
-            console.error('Failed to save configuration:', error);
-            const errorMessage = error.response?.data?.message || error.message || 'Failed to save settings.';
-            handleError(errorMessage);
+            await apiClient.put('/config', config);
+            alert('Settings Saved');
+        } catch (e) {
+            alert('Error saving settings');
         } finally {
-            setIsSaving(false);
+            setSaving(false);
         }
     };
 
-    const handleRemovePlant = async (plantId, plantName) => {
-        if (window.confirm(`Are you sure you want to remove plant "${plantName}"? This action cannot be undone.`)) {
-            try {
-                await deletePlant(plantId);
-                handleSuccess(`Plant "${plantName}" removed.`);
-            } catch (error) {
-                console.error("Remove Plant Error:", error);
-                const errorMessage = error.response?.data?.message || error.message || 'Failed to remove plant.';
-                handleError(errorMessage);
-            }
-        }
+    const handleDeletePlant = async (id) => {
+        if(!window.confirm("Delete this plant? This cannot be undone.")) return;
+        try {
+            await apiClient.delete(`/api/v2/operations/plants/${id}`);
+            fetchData();
+        } catch (e) { alert("Failed to delete"); }
     };
 
-    if (loading) {
-        return <p>Loading configuration data...</p>;
-    }
+    if (loading) return <div className="p-8 text-center text-gray-500">Loading System Config...</div>;
 
     return (
-        <>
-            <Notification notification={notification} setNotification={setNotification} />
-            <PageTitle title="Application Configuration" subtitle="Manage global settings and operational parameters." />
-
-            <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-4 flex items-center"><Factory className="mr-3" /> Plant Management</h3>
-            <Card className="mb-6">
-                <h4 className="text-lg font-semibold text-gray-700 mb-4">Existing Plants</h4>
-                {plants.length > 0 ? (
-                    <div className="overflow-x-auto mb-4">
-                        <table className="w-full text-left">
-                            <thead>
-                                <tr className="border-b bg-gray-50">
-                                    <th className="p-2">Name</th>
-                                    <th className="p-2">Capacity (kg)</th>
-                                    <th className="p-2">Status</th>
-                                    <th className="p-2">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {plants.map(plant => (
-                                    <tr key={plant.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-2 font-medium">{plant.name}</td>
-                                        <td className="p-2">{plant.capacity}</td>
-                                        <td className="p-2">{plant.status}</td>
-                                        <td className="p-2">
-                                        <Button onClick={() => handleRemovePlant(plant.id, plant.name)} variant="danger" icon={Trash2} title="Remove Plant" />
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                ) : (
-                    <p className="text-gray-500 mb-4">No plants configured yet.</p>
-                )}
-                <h4 className="text-lg font-semibold text-gray-700 mb-4 border-t pt-4">Add New Plant</h4>
-                <AddPlantForm onSuccess={handleSuccess} onError={handleError} />
-            </Card>
-
-            <h3 className="text-xl font-semibold text-gray-700 mt-6 mb-4">Global Application Settings</h3>
-            <Card>
-                <div className="space-y-6">
+        <div className="space-y-8">
+            <PageTitle title="System Configuration" subtitle="Global pricing, routing rules, and infrastructure" />
+            
+            {/* 1. Global Pricing & Routing (Restored inputs) */}
+            <div className="glass-card">
+                <div className="flex items-center mb-6 text-blue-400 border-b border-white/10 pb-2">
+                    <Sliders size={20} className="mr-2"/>
+                    <h3 className="font-bold">Global Settings</h3>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <label className="block text-sm font-medium text-gray-700">Low Stock Threshold (kg)</label>
-                        <p className="text-xs text-gray-500 mb-1">Alerts will be triggered when bulk LPG stock falls below this level.</p>
-                        <input
-                            type="number"
-                            name="lowStockThreshold"
-                            value={settings?.lowStockThreshold || ''}
-                            onChange={handleSettingsChange}
-                            className="p-2 border rounded-md w-full md:w-1/2"
-                        />
+                        <label className="block text-sm text-gray-400 mb-2">Base Selling Price (₦/kg)</label>
+                        <input type="number" className="glass-input w-full p-3" value={config.pricePerKg || ''} onChange={(e) => setConfig({...config, pricePerKg: parseFloat(e.target.value)})} />
                     </div>
-
-                    <div className="border-t pt-6">
-                        <h4 className="text-lg font-semibold text-gray-700 mb-4">Financial Settings</h4>
-                        <label className="block text-sm font-medium text-gray-700">VAT Rate (%)</label>
-                        <p className="text-xs text-gray-500 mb-1">Set the Value-Added Tax rate for tax compliance reports.</p>
-                        <input
-                            type="number"
-                            name="feeSettings.vatPercentage"
-                            step="0.1"
-                            value={settings?.feeSettings?.vatPercentage || ''}
-                            onChange={handleSettingsChange}
-                            className="p-2 border rounded-md w-full md:w-1/2"
-                        />
-                        <label className="block text-sm font-medium text-gray-700 mt-4">Service Fee Percentage (%)</label>
-                        <p className="text-xs text-gray-500 mb-1">Percentage applied as a service charge on orders.</p>
-                        <input
-                            type="number"
-                            name="feeSettings.serviceFeePercentage"
-                            step="0.1"
-                            value={settings?.feeSettings?.serviceFeePercentage || ''}
-                            onChange={handleSettingsChange}
-                            className="p-2 border rounded-md w-full md:w-1/2"
-                        />
-                        <label className="block text-sm font-medium text-gray-700 mt-4">Base Delivery Fee (₦)</label>
-                        <p className="text-xs text-gray-500 mb-1">Standard delivery charge for all orders.</p>
-                        <input
-                            type="number"
-                            name="feeSettings.baseDeliveryFee"
-                            value={settings?.feeSettings?.baseDeliveryFee || ''}
-                            onChange={handleSettingsChange}
-                            className="p-2 border rounded-md w-full md:w-1/2"
-                        />
-                        <label className="block text-sm font-medium text-gray-700 mt-4">Express Delivery Surcharge (₦)</label>
-                        <p className="text-xs text-gray-500 mb-1">Additional fee for express delivery option.</p>
-                        <input
-                            type="number"
-                            name="feeSettings.expressDeliverySurcharge"
-                            value={settings?.feeSettings?.expressDeliverySurcharge || ''}
-                            onChange={handleSettingsChange}
-                            className="p-2 border rounded-md w-full md:w-1/2"
-                        />
-                        <label className="block text-sm font-medium text-gray-700 mt-4">Share Capital (₦)</label>
-                        <p className="text-xs text-gray-500 mb-1">The company's initial share capital for financial statements.</p>
-                        <input
-                            type="number"
-                            name="financialSettings.shareCapital"
-                            value={settings?.financialSettings?.shareCapital || ''}
-                            onChange={handleSettingsChange}
-                            className="p-2 border rounded-md w-full md:w-1/2"
-                        />
+                    <div>
+                        <label className="block text-sm text-gray-400 mb-2">Cost Price (₦/kg) - Internal</label>
+                        <input type="number" className="glass-input w-full p-3" value={config.costPerKg || ''} onChange={(e) => setConfig({...config, costPerKg: parseFloat(e.target.value)})} />
                     </div>
-
-                    <div className="border-t pt-6">
-                        <h4 className="text-lg font-semibold text-gray-700 mb-4">Routing Settings</h4>
-                        <label className="block text-sm font-medium text-gray-700">Max Pickup Window (Minutes)</label>
-                        <p className="text-xs text-gray-500 mb-1">Maximum time a driver has to pick up an order after assignment.</p>
-                        <input
-                            type="number"
-                            name="routingSettings.maxPickupWindowMinutes"
-                            value={settings?.routingSettings?.maxPickupWindowMinutes || ''}
-                            onChange={handleSettingsChange}
-                            className="p-2 border rounded-md w-full md:w-1/2"
-                        />
-                        <label className="block text-sm font-medium text-gray-700 mt-4">Max Batch Weight (kg)</label>
-                        <p className="text-xs text-gray-500 mb-1">Maximum total weight for a single delivery route batch.</p>
-                        <input
-                            type="number"
-                            name="routingSettings.maxBatchWeightKg"
-                            value={settings?.routingSettings?.maxBatchWeightKg || ''}
-                            onChange={handleSettingsChange}
-                            className="p-2 border rounded-md w-full md:w-1/2"
-                        />
+                    <div>
+                        <label className="block text-sm text-gray-400 mb-2">VAT Rate (%)</label>
+                        <input type="number" className="glass-input w-full p-3" value={config.vatRate || ''} onChange={(e) => setConfig({...config, vatRate: parseFloat(e.target.value)})} />
                     </div>
-
-                    <div className="mt-6 pt-6 border-t">
-                        <Button onClick={handleSaveSettings} disabled={isSaving} icon={Save}>
-                            {isSaving ? 'Saving...' : 'Save Settings'}
-                        </Button>
+                    <div>
+                        <label className="block text-sm text-gray-400 mb-2">Delivery Base Fee (₦)</label>
+                        <input type="number" className="glass-input w-full p-3" value={config.deliveryFee || ''} onChange={(e) => setConfig({...config, deliveryFee: parseFloat(e.target.value)})} />
+                    </div>
+                    
+                    {/* RESTORED: Routing Specifics */}
+                    <div className="md:col-span-2 border-t border-white/10 pt-4 mt-2">
+                        <h4 className="text-white font-bold mb-4">Logistics Algorithm Tuning</h4>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <label className="block text-sm text-gray-400 mb-2">Max Pickup Window (Mins)</label>
+                                <input type="number" className="glass-input w-full p-3" value={config.routingSettings?.maxPickupWindowMinutes || ''} 
+                                    onChange={(e) => setConfig({...config, routingSettings: {...config.routingSettings, maxPickupWindowMinutes: parseInt(e.target.value)}})} />
+                            </div>
+                            <div>
+                                <label className="block text-sm text-gray-400 mb-2">Max Batch Weight (Kg)</label>
+                                <input type="number" className="glass-input w-full p-3" value={config.routingSettings?.maxBatchWeightKg || ''} 
+                                    onChange={(e) => setConfig({...config, routingSettings: {...config.routingSettings, maxBatchWeightKg: parseInt(e.target.value)}})} />
+                            </div>
+                        </div>
                     </div>
                 </div>
-            </Card>
-        </>
+
+                <div className="mt-8 flex justify-end">
+                    <Button onClick={handleSaveConfig} disabled={saving} icon={Save} className="glass-button px-8">
+                        {saving ? 'Saving...' : 'Save Changes'}
+                    </Button>
+                </div>
+            </div>
+
+            {/* 2. Plant Management (Restored) */}
+            <div className="glass-card">
+                <div className="flex items-center justify-between mb-6 border-b border-white/10 pb-2">
+                    <div className="flex items-center text-green-400">
+                        <Factory size={20} className="mr-2"/>
+                        <h3 className="font-bold">Plant Infrastructure</h3>
+                    </div>
+                    <Button size="sm" onClick={() => setShowPlantModal(true)} icon={PlusCircle} variant="secondary">Add Plant</Button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {plants.map(plant => (
+                        <div key={plant.id} className="bg-white/5 border border-white/5 p-4 rounded-xl flex justify-between items-start">
+                            <div>
+                                <h4 className="font-bold text-white">{plant.name}</h4>
+                                <p className="text-xs text-gray-400">{plant.location || 'No address'}</p>
+                                <div className="mt-2 flex gap-2">
+                                    <span className="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded">{plant.capacity.toLocaleString()} kg</span>
+                                    <span className={`text-xs px-2 py-1 rounded ${plant.status === 'Operational' ? 'bg-green-500/20 text-green-300' : 'bg-red-500/20 text-red-300'}`}>
+                                        {plant.status}
+                                    </span>
+                                </div>
+                            </div>
+                            <button onClick={() => handleDeletePlant(plant.id)} className="text-gray-500 hover:text-red-400 transition-colors">
+                                <Trash2 size={16} />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            {showPlantModal && <AddPlantModal onClose={() => setShowPlantModal(false)} onRefresh={fetchData} />}
+        </div>
     );
 }

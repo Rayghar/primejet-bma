@@ -1,82 +1,67 @@
-// src/views/01-Finance/RevenueAssurance.js
 import React, { useState, useEffect } from 'react';
-import { getRevenueAssuranceReport } from '../../api/inventoryService'; // Import the new service function
-import { formatCurrency, formatDate } from '../../utils/formatters';
-
+import { getRevenueAssuranceReport } from '../../api/financialService';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
+import { formatCurrency, formatDate } from '../../utils/formatters';
+import { ShieldCheck, AlertTriangle, Search } from 'lucide-react';
 
 export default function RevenueAssurance() {
-    const [reportData, setReportData] = useState([]);
+    const [batches, setBatches] = useState([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const fetchData = async () => {
-            setLoading(true);
-            try {
-                // Fetch pre-calculated revenue assurance data from the Node.js backend
-                const data = await getRevenueAssuranceReport();
-                setReportData(data);
-            } catch (error) {
-                console.error('Failed to fetch revenue assurance data:', error);
-            } finally {
-                setLoading(false);
-            }
-        };
-        fetchData();
-    }, []); // Empty dependency array means this runs once on mount
-
-    if (loading) {
-        return <PageTitle title="Revenue Assurance" subtitle="Calculating revenue performance for stock batches..." />;
-    }
-
-    if (!reportData || reportData.length === 0) {
-        return (
-            <Card>
-                <p className="text-center p-8 text-gray-500">
-                    No stock batch data available to generate revenue assurance report.
-                </p>
-            </Card>
-        );
-    }
+        // Fetches from V2 financials controller
+        getRevenueAssuranceReport().then(data => {
+            setBatches(data || []); 
+            setLoading(false);
+        });
+    }, []);
 
     return (
-        <>
-            <PageTitle title="Revenue Assurance" subtitle="Track expected vs. actual revenue from LPG stock batches." />
-            <Card>
-                <div className="overflow-x-auto">
-                    <table className="w-full text-left">
-                        <thead>
-                            <tr className="border-b bg-gray-50">
-                                <th className="p-4 text-sm font-semibold text-gray-600">Purchase Date</th>
-                                <th className="p-4 text-sm font-semibold text-gray-600">Quantity (Kg)</th>
-                                <th className="p-4 text-sm font-semibold text-gray-600 text-right">Expected Revenue</th>
-                                <th className="p-4 text-sm font-semibold text-gray-600 text-right">Actual Revenue</th>
-                                <th className="p-4 text-sm font-semibold text-gray-600 text-center">Deviation</th>
-                                <th className="p-4 text-sm font-semibold text-gray-600">Sales Progress</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {reportData.map(batch => (
-                                <tr key={batch.id} className="border-b hover:bg-gray-50">
-                                    <td className="p-4">{formatDate(batch.purchaseDate)}</td>
-                                    <td className="p-4 font-medium">{batch.quantityKg.toLocaleString()} kg</td>
-                                    <td className="p-4 text-right">{formatCurrency(batch.expectedRevenue)}</td>
-                                    <td className="p-4 text-right font-bold">{formatCurrency(batch.actualRevenue)}</td>
-                                    <td className={`p-4 text-center font-bold ${batch.deviation >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                        {batch.deviation.toFixed(1)}%
-                                    </td>
-                                    <td className="p-4">
-                                        <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                            <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${batch.progress}%` }}></div>
+        <div className="space-y-6">
+            <PageTitle title="Revenue Assurance" subtitle="Inventory Audit & Leakage Detection" />
+
+            {loading ? <p className="text-center text-gray-500">Auditing records...</p> : (
+                <div className="grid grid-cols-1 gap-6">
+                    {batches.map((batch, i) => {
+                        const isLeakage = batch.discrepancy < -1000;
+                        return (
+                            <div key={i} className={`glass-card border-l-4 ${isLeakage ? 'border-red-500 bg-red-500/5' : 'border-green-500 bg-green-500/5'}`}>
+                                <div className="flex justify-between items-start mb-4">
+                                    <div className="flex items-center">
+                                        {isLeakage ? <AlertTriangle className="text-red-500 mr-3"/> : <ShieldCheck className="text-green-500 mr-3"/>}
+                                        <div>
+                                            <h4 className="text-white font-bold">Batch #{batch.batchId}</h4>
+                                            <p className="text-xs text-gray-400">{formatDate(batch.date)} • {batch.supplier}</p>
                                         </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-xs text-gray-500 uppercase">Integrity</p>
+                                        <p className={`font-bold ${isLeakage ? 'text-red-400' : 'text-green-400'}`}>{batch.integrityScore}%</p>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-3 gap-4 text-sm bg-black/20 p-3 rounded-lg">
+                                    <div>
+                                        <p className="text-gray-500 text-xs">Expected (Stock)</p>
+                                        <p className="text-white font-mono">{formatCurrency(batch.expectedRevenue)}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-500 text-xs">Actual (Sales)</p>
+                                        <p className="text-white font-mono">{formatCurrency(batch.actualRevenue)}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-gray-500 text-xs">Discrepancy</p>
+                                        <p className={`font-mono font-bold ${isLeakage ? 'text-red-400' : 'text-green-400'}`}>
+                                            {formatCurrency(batch.discrepancy)}
+                                        </p>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })}
                 </div>
-            </Card>
-        </>
+            )}
+        </div>
     );
 }

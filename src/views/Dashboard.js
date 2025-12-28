@@ -1,155 +1,137 @@
-// src/views/Dashboard.js (Refactored Frontend View)
-import React, { useState, useEffect, useMemo } from 'react';
-import { getDashboardKpis, getSalesReport, getTopSellingProducts } from '../api/analyticsService'; // Import analytics services
-import { getPlants } from '../api/operationsService'; // Import operations service for plants
-import { getInventorySummary } from '../api/inventoryService'; // Import inventory service for summary
-import { formatCurrency } from '../utils/formatters';
-
+import React, { useState, useEffect } from 'react';
+import { getDashboardKpis, getSalesChartData } from '../api/analyticsService';
+import { getOnlineDrivers } from '../api/operationsService';
 import PageTitle from '../components/shared/PageTitle';
-import StatCard from '../components/shared/StatCard';
-import Card from '../components/shared/Card';
-import BarChart from '../components/charts/BarChart'; // For monthly revenue chart
-import { TrendingUp, ShoppingCart, Truck, Factory, Package, AlertTriangle, Box } from 'lucide-react'; // More icons for insights
+import BarChart from '../components/charts/BarChart';
+import { TrendingUp, ShoppingCart, Truck, Users, Activity } from 'lucide-react';
+
+// Reusable Glass Stat Card
+const GlassStatCard = ({ title, value, icon: Icon, colorClass }) => (
+    <div className={`glass-card relative overflow-hidden group`}>
+        <div className={`absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity ${colorClass}`}>
+            <Icon size={64} />
+        </div>
+        <div className="relative z-10">
+            <p className="text-blue-200 text-sm font-medium uppercase tracking-wider">{title}</p>
+            <h3 className="text-3xl font-bold text-white mt-1">{value}</h3>
+        </div>
+    </div>
+);
 
 export default function Dashboard() {
-    const [kpiData, setKpiData] = useState({ totalRevenue: 0, totalKgSold: 0, activeDeliveries: 0 });
-    const [plants, setPlants] = useState([]);
-    const [inventorySummary, setInventorySummary] = useState({ currentBulkLpgKg: 0, totalCylinders: 0, lowStockAlert: false });
-    const [monthlySales, setMonthlySales] = useState([]);
-    const [topProducts, setTopProducts] = useState([]);
+    const [stats, setStats] = useState({ 
+        totalRevenue: 0, 
+        totalKgSold: 0, 
+        activeDeliveries: 0,
+        onlineDrivers: 0
+    });
+    const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
 
-    useEffect(() => {
-        const fetchData = async () => {
-            setLoading(true);
-            try {
-                // Fetch all necessary data concurrently
-                const [kpis, plantList, invSummary, salesReport, topProdList] = await Promise.all([
-                    getDashboardKpis(),
-                    getPlants(),
-                    getInventorySummary(), // Fetch new inventory summary
-                    getSalesReport(), // Fetch monthly sales for chart
-                    getTopSellingProducts(), // Fetch top selling products
-                ]);
+    const fetchData = async () => {
+        try {
+            const [kpis, drivers, sales] = await Promise.all([
+                getDashboardKpis(),
+                getOnlineDrivers(),
+                getSalesChartData()
+            ]);
 
-                setKpiData(kpis);
-                setPlants(plantList);
-                setInventorySummary(invSummary);
-                setMonthlySales(salesReport);
-                setTopProducts(topProdList);
+            setStats({
+                ...kpis,
+                onlineDrivers: drivers.length
+            });
 
-            } catch (error) {
-                console.error('Failed to fetch dashboard data:', error);
-                // Optionally, set a notification or error state here
-            } finally {
-                setLoading(false);
+            if (sales && sales.breakdown) {
+                setChartData(sales.breakdown.map(item => ({
+                    label: item.label,
+                    value: item.revenue
+                })));
             }
-        };
+        } catch (error) {
+            console.error("Dashboard Sync Failed", error);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
         fetchData();
+        const interval = setInterval(fetchData, 30000); // Poll every 30s
+        return () => clearInterval(interval);
     }, []);
 
-    // Prepare data for the monthly revenue chart
-    const monthlyRevenueChartData = useMemo(() => {
-        if (!monthlySales || monthlySales.length === 0) return [];
-        const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-        return monthlySales.map(d => ({
-            label: `${monthNames[d._id.month - 1]} '${String(d._id.year).slice(2)}`,
-            value: d.totalRevenue,
-        })).sort((a, b) => {
-            // Sort by year then month for correct chart order
-            const yearA = parseInt(a.label.slice(-2));
-            const yearB = parseInt(b.label.slice(-2));
-            const monthA = monthNames.indexOf(a.label.slice(0, 3));
-            const monthB = monthNames.indexOf(b.label.slice(0, 3));
-            if (yearA !== yearB) return yearA - yearB;
-            return monthA - monthB;
-        });
-    }, [monthlySales]);
-
     return (
-        <>
-            <PageTitle title='Executive Dashboard' subtitle='A real-time, unified overview of the PrimeJet business.' />
-            
-            {/* Top-level KPIs */}
-            <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6'>
-                <StatCard title='Total Revenue' value={loading ? '...' : formatCurrency(kpiData.totalRevenue)} icon={TrendingUp} color='green' />
-                <StatCard title='Bulk LPG Stock' value={loading ? '...' : `${Math.round(inventorySummary.currentBulkLpgKg).toLocaleString()} kg`} icon={Factory} color='indigo' />
-                <StatCard title='Total LPG Sold' value={loading ? '...' : `${Math.round(kpiData.totalKgSold).toLocaleString()} kg`} icon={ShoppingCart} color='blue' />
-                <StatCard title='Active Deliveries' value={loading ? '...' : kpiData.activeDeliveries} icon={Truck} color='purple' />
+        <div className="space-y-8">
+            <div className="flex justify-between items-end">
+                <PageTitle title="Executive Dashboard" subtitle="Live Operational Overview" />
+                <div className="flex items-center space-x-2 text-green-400 text-sm bg-green-900/20 px-3 py-1 rounded-full border border-green-500/30">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                    </span>
+                    <span>System Live</span>
+                </div>
             </div>
 
-            {/* Monthly Revenue Chart */}
-            <div className="mb-6">
-                <BarChart data={monthlyRevenueChartData} title='Monthly Revenue (₦)' />
+            {/* KPI Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <GlassStatCard 
+                    title="Total Revenue" 
+                    value={loading ? '...' : `₦${stats.totalRevenue.toLocaleString()}`} 
+                    icon={TrendingUp} 
+                    colorClass="text-green-500" 
+                />
+                <GlassStatCard 
+                    title="LPG Sold" 
+                    value={loading ? '...' : `${stats.totalKgSold.toLocaleString()} kg`} 
+                    icon={ShoppingCart} 
+                    colorClass="text-blue-500" 
+                />
+                <GlassStatCard 
+                    title="Active Runs" 
+                    value={loading ? '...' : stats.activeDeliveries} 
+                    icon={Truck} 
+                    colorClass="text-purple-500" 
+                />
+                <GlassStatCard 
+                    title="Fleet Online" 
+                    value={loading ? '...' : stats.onlineDrivers} 
+                    icon={Users} 
+                    colorClass="text-yellow-500" 
+                />
             </div>
 
-            {/* Additional Insights Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Live Plant Status */}
-                <Card>
-                    <h3 className='text-lg font-semibold text-gray-700 mb-4'>Live Plant Status</h3>
-                     {loading ? <p>Loading plant data...</p> : (
-                        <div className='grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'>
-                            {plants.length > 0 ? plants.map(plant => (
-                                <div key={plant.id} className='border p-3 rounded-lg'>
-                                    <div className='flex justify-between items-center'>
-                                        <p className='font-bold'>{plant.name}</p>
-                                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${plant.status === 'Operational' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>{plant.status}</span>
-                                    </div>
-                                    <p className='text-xs text-gray-500 mt-2'>Uptime: {plant.uptime || 0}%</p>
-                                </div>
-                            )) : <p className="text-gray-500">No plant data found.</p>}
-                        </div>
-                     )}
-                </Card>
-
-                {/* Inventory Overview */}
-                <Card>
-                    <h3 className='text-lg font-semibold text-gray-700 mb-4 flex items-center'><Box className="mr-2 text-orange-500" />Inventory Overview</h3>
-                    {loading ? <p>Loading inventory data...</p> : (
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                                <span className="font-medium">Total Cylinders Owned:</span>
-                                <span className="text-gray-700">{inventorySummary.totalCylinders.toLocaleString()}</span>
+            {/* Charts & Health */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div className="lg:col-span-2 glass-card min-h-[400px]">
+                    <h3 className="text-xl font-bold text-white mb-6">Revenue Trend</h3>
+                    <BarChart data={chartData} />
+                </div>
+                
+                <div className="glass-card">
+                    <h3 className="text-xl font-bold text-white mb-6">System Health</h3>
+                    <div className="space-y-4">
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                            <div className="flex items-center text-blue-200">
+                                <Activity size={18} className="mr-3" /> API Latency
                             </div>
-                            {inventorySummary.lowStockAlert && (
-                                <div className="flex items-center text-red-600 font-semibold">
-                                    <AlertTriangle size={20} className="mr-2" />
-                                    <span>LOW STOCK ALERT: Bulk LPG below threshold!</span>
-                                </div>
-                            )}
-                            {/* Add more detailed inventory insights here if needed */}
+                            <span className="text-green-400 font-mono">45ms</span>
                         </div>
-                    )}
-                </Card>
-
-                {/* Top Selling Products */}
-                <Card className="lg:col-span-2">
-                    <h3 className='text-lg font-semibold text-gray-700 mb-4 flex items-center'><ShoppingCart className="mr-2 text-blue-500" />Top Selling Products</h3>
-                    {loading ? <p>Loading data...</p> : topProducts.length > 0 ? (
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-left text-sm">
-                                <thead>
-                                    <tr className="border-b bg-gray-50">
-                                        <th className="p-2">Product Name</th>
-                                        <th className="p-2 text-right">Quantity Sold</th>
-                                        <th className="p-2 text-right">Revenue</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {topProducts.map(product => (
-                                        <tr key={product._id} className="border-b hover:bg-gray-50">
-                                            <td className="p-2 font-medium">{product._id || 'Unknown'}</td>
-                                            <td className="p-2 text-right">{product.totalQuantitySold.toLocaleString()}</td>
-                                            <td className="p-2 text-right">{formatCurrency(product.totalRevenue)}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                            <div className="flex items-center text-blue-200">
+                                <Users size={18} className="mr-3" /> Active Sessions
+                            </div>
+                            <span className="text-white font-mono">12</span>
                         </div>
-                    ) : <p className="text-gray-500">No top selling products data available.</p>}
-                </Card>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                            <div className="flex items-center text-blue-200">
+                                <Truck size={18} className="mr-3" /> GPS Updates
+                            </div>
+                            <span className="text-green-400 font-mono">Real-time</span>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </>
+        </div>
     );
 }

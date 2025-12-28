@@ -1,139 +1,77 @@
-// src/views/05-Reports/TransactionHistory.js
 import React, { useState, useEffect } from 'react';
 import { getTransactionHistory } from '../../api/dataEntryService';
-import { getPlants } from '../../api/operationsService';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
-import Button from '../../components/shared/Button';
-import Notification from '../../components/shared/Notification';
 import { formatCurrency, formatDate } from '../../utils/formatters';
+import { Search, Filter } from 'lucide-react';
 
-const TransactionHistory = () => {
+export default function TransactionHistory() {
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState(null);
-    const [plants, setPlants] = useState([]);
-    const [filters, setFilters] = useState({
-        startDate: '',
-        endDate: '',
-        branchId: '',
-    });
+    const [filter, setFilter] = useState('');
 
     useEffect(() => {
-        fetchPlants();
-        fetchTransactions();
+        getTransactionHistory().then(data => {
+            setTransactions(data || []);
+            setLoading(false);
+        });
     }, []);
 
-    const fetchPlants = async () => {
-        try {
-            const plantList = await getPlants();
-            setPlants(plantList);
-        } catch (err) {
-            console.error('Failed to fetch plants:', err);
-        }
-    };
-
-    const fetchTransactions = async (currentFilters = filters) => {
-        setLoading(true);
-        try {
-            const data = await getTransactionHistory(currentFilters);
-            setTransactions(data);
-            setError(null);
-        } catch (err) {
-            console.error('Failed to fetch transaction history:', err);
-            setError('Failed to load transaction history. Please try again.');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const handleFilterChange = (e) => {
-        const { name, value } = e.target;
-        setFilters(prev => ({ ...prev, [name]: value }));
-    };
-
-    const handleFilterSubmit = (e) => {
-        e.preventDefault();
-        fetchTransactions(filters);
-    };
-
-    const getBranchName = (branchId) => {
-        const plant = plants.find(p => p._id === branchId);
-        return plant ? plant.name : 'N/A';
-    };
-
-    if (loading) {
-        return <Card><p className="p-8 text-center">Loading transaction history...</p></Card>;
-    }
+    const filtered = transactions.filter(t => 
+        t.description?.toLowerCase().includes(filter.toLowerCase()) || 
+        t.type?.toLowerCase().includes(filter.toLowerCase())
+    );
 
     return (
-        <>
-            <PageTitle title="Transaction History" subtitle="View and search all sales and expense records." />
-            {error && <Notification notification={{ show: true, message: error, type: 'error' }} setNotification={() => setError(null)} />}
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <PageTitle title="Transaction Ledger" subtitle="Historical record of all POS entries" />
+                <div className="relative">
+                    <input 
+                        type="text" 
+                        placeholder="Search ledger..." 
+                        className="glass-input pl-10 py-2 w-64 text-sm"
+                        value={filter}
+                        onChange={e => setFilter(e.target.value)}
+                    />
+                    <Search className="absolute left-3 top-2.5 text-gray-500" size={16}/>
+                </div>
+            </div>
 
-            <Card className="mb-6">
-                <h3 className="text-lg font-semibold mb-4">Filters</h3>
-                <form onSubmit={handleFilterSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Start Date</label>
-                        <input type="date" name="startDate" value={filters.startDate} onChange={handleFilterChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">End Date</label>
-                        <input type="date" name="endDate" value={filters.endDate} onChange={handleFilterChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm" />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Branch</label>
-                        <select name="branchId" value={filters.branchId} onChange={handleFilterChange} className="mt-1 block w-full rounded-md border-gray-300 shadow-sm">
-                            <option value="">All Branches</option>
-                            {plants.map(plant => (
-                                <option key={plant._id} value={plant._id}>{plant.name}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <Button type="submit">Apply Filters</Button>
-                    </div>
-                </form>
-            </Card>
-
-            <Card>
+            <Card className="p-0 overflow-hidden">
                 <div className="overflow-x-auto">
-                    <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gray-50">
+                    <table className="w-full text-left text-sm text-gray-400">
+                        <thead className="bg-white/5 text-gray-300 uppercase text-xs">
                             <tr>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Branch</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
-                                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
+                                <th className="p-4">Date</th>
+                                <th className="p-4">Type</th>
+                                <th className="p-4">Description</th>
+                                <th className="p-4 text-right">Amount</th>
+                                <th className="p-4">Cashier</th>
                             </tr>
                         </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                            {transactions.length > 0 ? (
-                                transactions.map((tx) => (
-                                    <tr key={tx._id} className={tx.type === 'Sale' ? 'bg-green-50' : 'bg-red-50'}>
-                                        {/* FIX: Use the 'date' field for display, with a fallback to 'createdAt' */}
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{formatDate(tx.date || tx.createdAt, true)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{tx.type}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{getBranchName(tx.branchId)}</td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                            {tx.type === 'Sale' ? `${tx.kgSold?.toFixed(2) || 'N/A'} kg, ${tx.transactionType}` : tx.description}
-                                        </td>
-                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatCurrency(tx.amount)}</td>
-                                    </tr>
-                                ))
-                            ) : (
-                                <tr>
-                                    <td colSpan="5" className="px-6 py-4 text-center text-gray-500">No transactions found.</td>
+                        <tbody className="divide-y divide-white/5">
+                            {filtered.map(tx => (
+                                <tr key={tx.id || tx._id} className="hover:bg-white/5">
+                                    <td className="p-4">{formatDate(tx.date || tx.createdAt)}</td>
+                                    <td className="p-4">
+                                        <span className={`px-2 py-1 rounded text-[10px] uppercase font-bold ${tx.type === 'sale' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                            {tx.type}
+                                        </span>
+                                    </td>
+                                    <td className="p-4 text-white">
+                                        {tx.type === 'sale' ? `${tx.kgSold}kg LPG` : tx.description}
+                                    </td>
+                                    <td className={`p-4 text-right font-mono font-bold ${tx.type === 'sale' ? 'text-green-400' : 'text-red-400'}`}>
+                                        {tx.type === 'expense' ? '-' : ''}{formatCurrency(tx.amount)}
+                                    </td>
+                                    <td className="p-4 text-xs">{tx.cashierName || 'Unknown'}</td>
                                 </tr>
-                            )}
+                            ))}
                         </tbody>
                     </table>
                 </div>
             </Card>
-        </>
+        </div>
     );
-};
-
-export default TransactionHistory;
+}

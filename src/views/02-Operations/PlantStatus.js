@@ -1,334 +1,95 @@
-// src/views/02-Operations/PlantStatus.js (Refactored)
-
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { getPlants, getMaintenanceLogs, getPlantDailyOutputHistory, addMaintenanceLog } from '../../api/operationsService';
-import { formatCurrency, formatDate } from '../../utils/formatters';
-
+import React, { useState, useEffect } from 'react';
+import { getPlants, getMaintenanceLogs, addMaintenanceLog } from '../../api/operationsService'; 
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
 import Modal from '../../components/shared/Modal';
-import Notification from '../../components/shared/Notification';
-import LineChart from '../../components/charts/LineChart';
-import { Factory, AlertTriangle, Wrench, Calendar, PlusCircle, DollarSign, TrendingUp, TrendingDown } from 'lucide-react'; // Added DollarSign, TrendingUp, TrendingDown
+import { Factory, Wrench, AlertTriangle, CheckCircle, PlusCircle, History } from 'lucide-react';
 
-// --- Add Maintenance Log Modal Component (remains unchanged) ---
-const AddMaintenanceLogModal = ({ plantId, onSuccess, onError, onClose }) => {
-    const [formData, setFormData] = useState({
-        type: 'Routine',
-        description: '',
-        startDate: new Date().toISOString().split('T')[0],
-        endDate: '',
-        cost: '',
-        performedBy: '',
-        status: 'Scheduled',
-    });
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+// --- Maintenance Modal ---
+const AddMaintenanceModal = ({ plantId, onClose, onRefresh }) => {
+    const [form, setForm] = useState({ type: 'Routine', description: '', cost: '', performedBy: '' });
+    const [submitting, setSubmitting] = useState(false);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setIsSubmitting(true);
+        setSubmitting(true);
         try {
-            await addMaintenanceLog(plantId, {
-                ...formData,
-                cost: parseFloat(formData.cost) || 0,
-            });
-            onSuccess('Maintenance log added successfully!');
+            await addMaintenanceLog(plantId, { ...form, cost: parseFloat(form.cost), startDate: new Date() });
+            onRefresh();
             onClose();
-        } catch (error) {
-            console.error("Add Maintenance Log Error:", error);
-            onError(error.response?.data?.message || 'Failed to add maintenance log.');
-        } finally {
-            setIsSubmitting(false);
-        }
+        } catch(e) { alert("Error: " + e.message); } 
+        finally { setSubmitting(false); }
     };
 
     return (
-        <Modal title={`Add Maintenance Log for ${plantId}`} onClose={onClose}>
+        <Modal title="Log Maintenance" onClose={onClose}>
             <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Type</label>
-                    <select name="type" value={formData.type} onChange={handleChange} className="w-full p-2 border rounded-md bg-white">
-                        <option>Routine</option>
-                        <option>Emergency</option>
-                        <option>Repair</option>
-                        <option>Upgrade</option>
-                        <option>Inspection</option>
-                        <option>Other</option>
-                    </select>
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Description</label>
-                    <textarea name="description" value={formData.description} onChange={handleChange} className="w-full p-2 border rounded-md" rows="3" required />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Start Date</label>
-                        <input type="date" name="startDate" value={formData.startDate} onChange={handleChange} className="w-full p-2 border rounded-md" required />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">End Date (Optional)</label>
-                        <input type="date" name="endDate" value={formData.endDate} onChange={handleChange} className="w-full p-2 border rounded-md" />
-                    </div>
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Cost (₦)</label>
-                    <input type="number" name="cost" value={formData.cost} onChange={handleChange} className="w-full p-2 border rounded-md" />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Performed By</label>
-                    <input type="text" name="performedBy" value={formData.performedBy} onChange={handleChange} className="w-full p-2 border rounded-md" />
-                </div>
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Status</label>
-                    <select name="status" value={formData.status} onChange={handleChange} className="w-full p-2 border rounded-md bg-white">
-                        <option>Scheduled</option>
-                        <option>In Progress</option>
-                        <option>Completed</option>
-                        <option>Canceled</option>
-                    </select>
-                </div>
-                <div className="flex justify-end pt-2">
-                    <Button type="submit" disabled={isSubmitting}>
-                        {isSubmitting ? 'Saving...' : 'Add Log'}
-                    </Button>
-                </div>
+                <select className="glass-input w-full p-2 bg-slate-800" value={form.type} onChange={e => setForm({...form, type: e.target.value})}>
+                    <option>Routine</option><option>Repair</option><option>Emergency</option>
+                </select>
+                <textarea placeholder="Description of work..." className="glass-input w-full p-2 h-24" value={form.description} onChange={e => setForm({...form, description: e.target.value})} required />
+                <input type="number" placeholder="Cost (₦)" className="glass-input w-full p-2" value={form.cost} onChange={e => setForm({...form, cost: e.target.value})} required />
+                <input placeholder="Performed By" className="glass-input w-full p-2" value={form.performedBy} onChange={e => setForm({...form, performedBy: e.target.value})} />
+                <div className="flex justify-end"><Button type="submit" disabled={submitting}>Save Log</Button></div>
             </form>
         </Modal>
     );
 };
 
-
-// --- PlantStatusCard Sub-component (Enhanced) ---
-const PlantStatusCard = ({ plant, onAddMaintenance, plantHistory, maintenanceLogs }) => {
-    const statusColors = {
-        Operational: { bg: 'bg-green-100', text: 'text-green-800', border: 'border-green-500' },
-        Maintenance: { bg: 'bg-yellow-100', text: 'text-yellow-800', border: 'border-yellow-500' },
-        Offline: { bg: 'bg-red-100', text: 'text-red-800', border: 'border-red-500' },
-        Warning: { bg: 'bg-orange-100', text: 'text-orange-800', border: 'border-orange-500' },
-    };
-    const color = statusColors[plant.status] || { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-500' };
-    
-    const outputToday = parseFloat(plant.outputToday) || 0;
-    const capacity = parseFloat(plant.capacity) || 0;
-    const targetDailyOutput = parseFloat(plant.targetDailyOutputKg) || 0;
-
-    // Calculate percentage against target output
-    const outputProgressPercentage = targetDailyOutput > 0 ? (outputToday / targetDailyOutput) * 100 : 0;
-    const outputGaugeColor = outputProgressPercentage >= 90 ? 'bg-green-600' : outputProgressPercentage >= 50 ? 'bg-yellow-500' : 'bg-red-500';
-
-    // Determine alerts
-    const lowOutputAlert = targetDailyOutput > 0 && outputToday < (targetDailyOutput * 0.5) && plant.status === 'Operational'; // Less than 50% of target
-    const maintenanceDueAlert = plant.nextMaintenanceDate && new Date(plant.nextMaintenanceDate) < new Date(); // Next maintenance date is in the past
-
-    // Prepare data for the mini-chart
-    const chartData = useMemo(() => {
-        return plantHistory.map(entry => ({
-            label: formatDate(entry.date),
-            value: entry.totalKgSold || 0,
-        }));
-    }, [plantHistory]);
-
-    const latestMaintenance = maintenanceLogs.find(log => log.status === 'Completed' || log.status === 'In Progress');
-    const nextScheduledMaintenance = maintenanceLogs.find(log => log.status === 'Scheduled' && new Date(log.startDate) >= new Date());
-
-
-    return (
-        <Card className={`border-l-4 ${color.border}`}>
-            <div className="flex justify-between items-center">
-                <h3 className="text-xl font-bold text-gray-800">{plant.name}</h3>
-                <span className={`px-3 py-1 text-sm font-semibold rounded-full ${color.bg} ${color.text}`}>
-                    {plant.status}
-                </span>
-            </div>
-            
-            {/* Daily Output Gauge */}
-            <div className="mt-4 text-center">
-                <p className="text-xs text-gray-500 uppercase">Daily Output Progress</p>
-                <div className="relative w-full h-4 bg-gray-200 rounded-full mt-2">
-                    <div className={`h-full rounded-full ${outputGaugeColor}`} style={{ width: `${Math.min(100, outputProgressPercentage)}%` }}></div>
-                    <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-gray-800">
-                        {outputToday.toLocaleString()} kg / {targetDailyOutput.toLocaleString()} kg
-                    </span>
-                </div>
-                <p className="text-sm text-gray-600 mt-1">{outputProgressPercentage.toFixed(1)}% of target</p>
-            </div>
-
-            {/* Alerts */}
-            {(lowOutputAlert || maintenanceDueAlert) && (
-                <div className="mt-4 p-2 bg-red-100 text-red-800 rounded-md flex items-center text-sm font-semibold">
-                    <AlertTriangle size={18} className="mr-2" />
-                    {lowOutputAlert && <span>Low Output! </span>}
-                    {maintenanceDueAlert && <span>Maintenance Overdue!</span>}
-                </div>
-            )}
-
-            {/* Key Metrics */}
-            <div className="mt-4 grid grid-cols-2 gap-4 text-center">
-                <div>
-                    <p className="text-xs text-gray-500 uppercase">Uptime</p>
-                    <p className={`text-2xl font-bold ${color.text}`}>{plant.uptime || 0}%</p>
-                </div>
-                <div>
-                    <p className="text-xs text-gray-500 uppercase">Capacity</p>
-                    <p className="text-2xl font-bold text-gray-700">{capacity.toLocaleString()} kg</p>
-                </div>
-            </div>
-
-            {/* NEW: Plant Profitability Metrics */}
-            <div className="mt-4 border-t pt-4">
-                <h4 className="text-md font-semibold text-gray-700 mb-2 flex items-center"><DollarSign size={16} className="mr-2" />Profitability (Last 30 Days)</h4>
-                <div className="space-y-1">
-                    <div className="flex justify-between text-sm">
-                        <span>Revenue:</span>
-                        <span className="font-semibold">{formatCurrency(plant.totalPlantRevenue || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                        <span>Expenses:</span>
-                        <span className="font-semibold text-red-600">{formatCurrency(plant.totalPlantExpenses || 0)}</span>
-                    </div>
-                    <div className="flex justify-between text-sm font-bold">
-                        <span>Net Profit:</span>
-                        <span className={`${plant.plantProfitability >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                            {formatCurrency(plant.plantProfitability || 0)}
-                        </span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                        <span>Expenses as % of Revenue:</span>
-                        <span className="font-semibold">{plant.expensesAsPercentageOfRevenue.toFixed(1)}%</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* Mini-Graph of Daily Output */}
-            <div className="mt-4 border-t pt-4">
-                <h4 className="text-md font-semibold text-gray-700 mb-2">Last 7 Days Output (kg)</h4>
-                {chartData.length > 0 ? (
-                    <LineChart data={chartData} title="" />
-                ) : (
-                    <p className="text-gray-500 text-sm">No recent output data.</p>
-                )}
-            </div>
-
-            {/* Maintenance Info */}
-            <div className="mt-4 border-t pt-4">
-                <h4 className="text-md font-semibold text-gray-700 mb-2 flex items-center"><Wrench size={16} className="mr-2" />Maintenance</h4>
-                {latestMaintenance ? (
-                    <p className="text-sm text-gray-700">Last: {latestMaintenance.type} on {formatDate(latestMaintenance.startDate)}</p>
-                ) : (
-                    <p className="text-sm text-gray-500">No recent maintenance logs.</p>
-                )}
-                {nextScheduledMaintenance ? (
-                    <p className="text-sm text-gray-700 flex items-center"><Calendar size={14} className="mr-1" />Next: {nextScheduledMaintenance.type} on {formatDate(nextScheduledMaintenance.startDate)}</p>
-                ) : (
-                    <p className="text-sm text-gray-500">No upcoming scheduled maintenance.</p>
-                )}
-                <Button onClick={() => onAddMaintenance(plant.id)} variant="secondary" size="sm" icon={PlusCircle} className="mt-2">
-                    Add Maintenance Log
-                </Button>
-            </div>
-        </Card>
-    );
-};
-
-// --- Main PlantStatus View Component ---
+// --- Main View ---
 export default function PlantStatus() {
     const [plants, setPlants] = useState([]);
-    const [plantHistoryData, setPlantHistoryData] = useState({});
-    const [maintenanceLogsData, setMaintenanceLogsData] = useState({});
     const [loading, setLoading] = useState(true);
-    const [showMaintenanceModal, setShowMaintenanceModal] = useState(false);
-    const [selectedPlantIdForMaintenance, setSelectedPlantIdForMaintenance] = useState(null);
-    const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
+    const [selectedPlant, setSelectedPlant] = useState(null); // For maintenance modal
 
-    // Notification handlers (moved here for useCallback dependencies)
-    const handleSuccess = useCallback((message) => {
-        setNotification({ show: true, message, type: 'success' });
-        setShowMaintenanceModal(false); // Close modal on success
-        // No need to call fetchData here, as it's a dependency of the useEffect
-    }, []); // Empty dependency array for stability
+    const refresh = () => {
+        getPlants().then(data => { setPlants(data); setLoading(false); });
+    };
 
-    const handleError = useCallback((msg) => setNotification({ show: true, message: msg, type: 'error' }), []); // Empty dependency array for stability
+    useEffect(() => { refresh(); }, []);
 
-    // Function to fetch all necessary data for the Plant Status view, wrapped in useCallback
-    const fetchData = useCallback(async () => {
-        setLoading(true);
-        try {
-            const plantList = await getPlants();
-            setPlants(plantList);
-
-            const historyPromises = plantList.map(plant => getPlantDailyOutputHistory(plant.id));
-            const maintenancePromises = plantList.map(plant => getMaintenanceLogs(plant.id));
-
-            const allHistory = await Promise.all(historyPromises);
-            const allMaintenance = await Promise.all(maintenancePromises);
-
-            const historyMap = {};
-            allHistory.forEach((history, index) => {
-                historyMap[plantList[index].id] = history;
-            });
-            setPlantHistoryData(historyMap);
-
-            const maintenanceMap = {};
-            allMaintenance.forEach((logs, index) => {
-                maintenanceMap[plantList[index].id] = logs;
-            });
-            setMaintenanceLogsData(maintenanceMap);
-
-        } catch (error) {
-            console.error('Failed to fetch plant status data:', error);
-            handleError('Failed to load plant data.'); // Use stable handleError
-        } finally {
-            setLoading(false);
-        }
-    }, [handleError]); // fetchData depends on handleError
-
-    // Fetch data on component mount and after any maintenance log is added
-    useEffect(() => {
-        fetchData();
-    }, [fetchData]); // fetchData is now a stable dependency
-
-    // Handler for opening the Add Maintenance Log modal
-    const handleAddMaintenance = useCallback((plantId) => {
-        setSelectedPlantIdForMaintenance(plantId);
-        setShowMaintenanceModal(true);
-    }, []); // Empty dependency array for stability
+    if (loading) return <div className="p-8 text-center text-gray-500">Loading Telemetry...</div>;
 
     return (
-        <>
-            <Notification notification={notification} setNotification={setNotification} />
-            {showMaintenanceModal && selectedPlantIdForMaintenance && (
-                <AddMaintenanceLogModal 
-                    plantId={selectedPlantIdForMaintenance} 
-                    onSuccess={handleSuccess} // Use stable handleSuccess
-                    onError={handleError} // Use stable handleError
-                    onClose={() => setShowMaintenanceModal(false)} 
-                />
-            )}
-
-            <PageTitle title="Multi-Plant Dashboard" subtitle="Real-time operational status and performance of all plant locations." />
+        <div className="space-y-6">
+            <PageTitle title="Plant Performance" subtitle="Operational health & maintenance logs" />
             
-            {loading ? (
-                <p>Loading plant status...</p>
-            ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    {plants.length > 0 ? (
-                        plants.map(plant => (
-                            <PlantStatusCard 
-                                key={plant.id} 
-                                plant={plant} 
-                                onAddMaintenance={handleAddMaintenance}
-                                plantHistory={plantHistoryData[plant.id] || []}
-                                maintenanceLogs={maintenanceLogsData[plant.id] || []}
-                            />
-                        ))
-                    ) : (
-                        <p className="text-gray-500">No plant data found. Please add plants in the admin configuration.</p>
-                    )}
-                </div>
-            )}
-        </>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {plants.map(plant => (
+                    <div key={plant.id} className={`glass-card border-l-4 ${plant.status === 'Operational' ? 'border-green-500' : 'border-red-500'}`}>
+                        <div className="flex justify-between items-start mb-4">
+                            <div className="flex items-center">
+                                <div className={`p-3 rounded-xl mr-4 ${plant.status === 'Operational' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                    <Factory size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="font-bold text-white text-lg">{plant.name}</h3>
+                                    <p className="text-xs text-gray-400">{plant.location}</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setSelectedPlant(plant.id)} className="text-xs flex items-center bg-blue-600/20 text-blue-300 px-2 py-1 rounded hover:bg-blue-600/40">
+                                <Wrench size={12} className="mr-1"/> Log Fix
+                            </button>
+                        </div>
+                        
+                        <div className="space-y-3">
+                            <div>
+                                <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                    <span>Load</span><span>{plant.currentLoad || 0}%</span>
+                                </div>
+                                <div className="w-full bg-gray-700 rounded-full h-1.5"><div className="bg-blue-500 h-1.5 rounded-full" style={{ width: `${plant.currentLoad || 0}%` }}></div></div>
+                            </div>
+                            <div className="flex justify-between items-center text-sm pt-2">
+                                <span className="text-gray-400">Output Today</span>
+                                <span className="text-white font-mono">{plant.outputToday?.toLocaleString() || 0} kg</span>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {selectedPlant && <AddMaintenanceModal plantId={selectedPlant} onClose={() => setSelectedPlant(null)} onRefresh={refresh} />}
+        </div>
     );
 }

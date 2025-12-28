@@ -1,32 +1,26 @@
-// src/api/authService.js
-import httpClient from './httpClient';
+import apiClient from './apiClient';
 
-/**
- * Logs in a user with email and password by sending a request to the Node.js backend.
- * @param {string} email - The user's email.
- * @param {string} password - The user's password.
- * @returns {Promise<object>} The server response containing the JWT token and user data.
- */
-const loginUser = async (email, password) => {
-  const { data } = await httpClient.post('/auth/login', { email, password });
-  return data;
+export const signInUser = async (email, password) => {
+    // Hits V1 Auth Endpoint
+    const response = await apiClient.post('/auth/login', { email, password });
+    
+    if (response.data.token) {
+        localStorage.setItem('token', response.data.token);
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+    }
+    return response.data;
 };
 
-/**
- * Fetches the profile of the currently authenticated user from the backend.
- * This is used to hydrate the user state after a page refresh or initial load.
- * @returns {Promise<object>} The user's profile data.
- */
-const getMyProfile = async () => {
-  const { data } = await httpClient.get('/users/me');
-  return data;
+export const logoutUser = () => {
+    localStorage.clear();
+    window.location.href = '/';
 };
 
-/**
- * Logs out the user by removing the JWT token from local storage.
- */
-const logoutUser = () => {
-  localStorage.removeItem('token');
+export const getCurrentUser = () => {
+    const userStr = localStorage.getItem('user');
+    try {
+        return userStr ? JSON.parse(userStr) : null;
+    } catch (e) {
+        return null;
+    }
 };
-
-export { loginUser, getMyProfile, logoutUser };

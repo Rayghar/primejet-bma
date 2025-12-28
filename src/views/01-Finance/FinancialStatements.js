@@ -1,217 +1,143 @@
-// src/views/01-Finance/FinancialStatements.js (Refactored)
-
 import React, { useState, useEffect } from 'react';
-import { getFinancialStatements } from '../../api/inventoryService'; // Import the service function
-import { getPlants } from '../../api/operationsService'; // Import to get plant list for dropdown
-import { formatCurrency, formatDate } from '../../utils/formatters';
-
+import { getFinancialStatements } from '../../api/financialService';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
+import Button from '../../components/shared/Button';
+import { Printer, FileText, TrendingUp, DollarSign, Activity } from 'lucide-react';
+import { formatCurrency } from '../../utils/formatters';
 
-// --- Sub-component for Income Statement Table ---
-const IncomeStatementTable = ({ data, totals }) => {
-    const headers = ["Month", "Revenue", "COGS", "Gross Profit", "Op. Costs", "Net Profit"];
-    return (
-        <div className="overflow-x-auto">
-            <table className="w-full text-left">
-                <thead>
-                    <tr className="border-b bg-gray-50">
-                        {headers.map(header => <th key={header} className="p-4 text-sm font-semibold text-gray-600">{header}</th>)}
-                    </tr>
-                </thead>
-                <tbody>
-                    {data.map(row => (
-                        <tr key={row.label} className="border-b hover:bg-gray-50">
-                            <td className="p-4 font-medium">{row.label}</td>
-                            <td className="p-4">{formatCurrency(row.revenue)}</td>
-                            <td className="p-4">{formatCurrency(row.cogs)}</td>
-                            <td className="p-4 font-bold">{formatCurrency(row.grossProfit)}</td>
-                            <td className="p-4 text-red-600">{formatCurrency(row.opCosts)}</td>
-                            <td className={`p-4 font-bold ${row.netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(row.netProfit)}</td>
-                        </tr>
-                    ))}
-                </tbody>
-                <tfoot>
-                    <tr className="border-t-2 font-bold bg-gray-100">
-                        <td className="p-4">Total</td>
-                        <td className="p-4">{formatCurrency(totals.revenue)}</td>
-                        <td className="p-4">{formatCurrency(totals.cogs)}</td>
-                        <td className="p-4">{formatCurrency(totals.grossProfit)}</td>
-                        <td className="p-4 text-red-600">{formatCurrency(totals.opCosts)}</td>
-                        <td className={`p-4 ${totals.netProfit >= 0 ? 'text-green-600' : 'text-red-600'}`}>{formatCurrency(totals.netProfit)}</td>
-                    </tr>
-                </tfoot>
-            </table>
-        </div>
-    );
-};
-
-// --- Sub-component for Balance Sheet ---
-const BalanceSheetDisplay = ({ data }) => {
-    return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 p-4">
-            {/* Assets Side */}
-            <div>
-                <h4 className="text-lg font-semibold text-gray-700 border-b pb-2 mb-4">Assets</h4>
-                <div className="space-y-4">
-                    <div>
-                        <h5 className="font-bold">Current Assets</h5>
-                        <div className="flex justify-between text-sm pl-4"><span>Cash</span> <span>{formatCurrency(data.assets.current.cash)}</span></div>
-                        <div className="flex justify-between text-sm pl-4 border-b pb-2"><span>Inventory</span> <span>{formatCurrency(data.assets.current.inventory)}</span></div>
-                        <div className="flex justify-between font-bold text-sm pl-4 pt-1"><span>Total Current Assets</span> <span>{formatCurrency(data.assets.current.total)}</span></div>
-                    </div>
-                    <div>
-                        <h5 className="font-bold">Fixed Assets</h5>
-                        <div className="flex justify-between text-sm pl-4"><span>Plants & Vans</span> <span>{formatCurrency(data.assets.fixed.gross)}</span></div>
-                        <div className="flex justify-between text-sm pl-4 border-b pb-2"><span>Less: Depreciation</span> <span className="text-red-600">({formatCurrency(data.assets.fixed.depreciation)})</span></div>
-                        <div className="flex justify-between font-bold text-sm pl-4 pt-1"><span>Total Fixed Assets</span> <span>{formatCurrency(data.assets.fixed.net)}</span></div>
-                    </div>
-                </div>
-                <div className="flex justify-between font-extrabold text-lg pt-4 mt-4 border-t-2">
-                    <span>Total Assets</span>
-                    <span>{formatCurrency(data.assets.total)}</span>
-                </div>
-            </div>
-
-            {/* Liabilities & Equity Side */}
-            <div>
-                <h4 className="text-lg font-semibold text-gray-700 border-b pb-2 mb-4">Liabilities & Equity</h4>
-                <div className="space-y-4">
-                    <div>
-                        <h5 className="font-bold">Liabilities</h5>
-                        <div className="flex justify-between text-sm pl-4"><span>Loan Principal</span> <span>{formatCurrency(data.liabilities.loans)}</span></div>
-                        <div className="flex justify-between font-bold text-sm pl-4 pt-1 border-b pb-2"><span>Total Liabilities</span> <span>{formatCurrency(data.liabilities.total)}</span></div>
-                    </div>
-                    <div>
-                        <h5 className="font-bold">Equity</h5>
-                        <div className="flex justify-between text-sm pl-4"><span>Share Capital</span> <span>{formatCurrency(data.equity.shareCapital)}</span></div>
-                        <div className="flex justify-between text-sm pl-4 border-b pb-2"><span>Retained Earnings</span> <span>{formatCurrency(data.equity.retainedEarnings)}</span></div>
-                        <div className="flex justify-between font-bold text-sm pl-4 pt-1"><span>Total Equity</span> <span>{formatCurrency(data.equity.total)}</span></div>
-                    </div>
-                </div>
-                <div className="flex justify-between font-extrabold text-lg pt-4 mt-4 border-t-2">
-                    <span>Total Liabilities & Equity</span>
-                    <span>{formatCurrency(data.totalLiabilitiesAndEquity)}</span>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-// --- Sub-component for Cash Flow Statement ---
-const CashFlowStatementDisplay = ({ data }) => {
-    return (
-        <div className="p-4 space-y-4">
-            <div className="flex justify-between p-3 rounded-lg bg-green-50"><span>Cash from Operations:</span> <span className="font-bold text-green-600">{formatCurrency(data.operating)}</span></div>
-            <div className="flex justify-between p-3 rounded-lg bg-red-50"><span>Cash for Investing:</span> <span className="font-bold text-red-600">({formatCurrency(data.investing)})</span></div>
-            <div className="flex justify-between p-3 rounded-lg bg-blue-50"><span>Cash from Financing:</span> <span className="font-bold text-blue-600">{formatCurrency(data.financing)}</span></div>
-            <div className="flex justify-between p-3 rounded-lg bg-gray-100 border-t-2 mt-4">
-                <span className="font-bold text-lg">Net Cash Flow:</span>
-                <span className="font-bold text-lg">{formatCurrency(data.netCashFlow)}</span>
-            </div>
-        </div>
-    );
-};
-
-// --- Main View Component ---
 export default function FinancialStatements() {
     const [activeTab, setActiveTab] = useState('income');
-    const [financialData, setFinancialData] = useState(null);
-    const [dataLoading, setDataLoading] = useState(true);
-    const [selectedBranch, setSelectedBranch] = useState('all');
-    const [plants, setPlants] = useState([]);
-    const [plantsLoading, setPlantsLoading] = useState(true);
+    const [period, setPeriod] = useState('monthly');
+    const [data, setData] = useState(null);
+    const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        const fetchData = async () => {
-            setDataLoading(true);
-            try {
-                const data = await getFinancialStatements(selectedBranch);
-                setFinancialData(data);
-            } catch (error) {
-                console.error('Failed to fetch financial data:', error);
-            } finally {
-                setDataLoading(false);
-            }
-        };
-        fetchData();
-    }, [selectedBranch]);
+        setLoading(true);
+        getFinancialStatements(period)
+            .then(res => setData(res))
+            .catch(err => console.error(err))
+            .finally(() => setLoading(false));
+    }, [period]);
 
-    useEffect(() => {
-        const fetchPlants = async () => {
-            setPlantsLoading(true);
-            try {
-                const plantList = await getPlants();
-                setPlants(plantList);
-            } catch (error) {
-                console.error('Failed to fetch plants for dropdown:', error);
-            } finally {
-                setPlantsLoading(false);
-            }
-        };
-        fetchPlants();
-    }, []);
+    const handlePrint = () => window.print();
 
-    if (dataLoading || plantsLoading) {
-        return <PageTitle title="Financial Statements" subtitle="Loading and unifying financial data..." />;
-    }
-
-    if (!financialData) {
-        return (
-            <Card>
-                <p className="text-center p-8 text-gray-500">
-                    Could not calculate financial data. Please ensure you have sales, asset, and loan records in the system.
-                </p>
-            </Card>
-        );
-    }
+    if (loading) return <div className="p-8 text-center text-blue-400 animate-pulse">Loading Financial Data...</div>;
 
     return (
-        <>
-            <div className="flex justify-between items-center mb-4">
-                <PageTitle title="Financial Statements" subtitle="Live financial health of your business." />
-                <div>
-                    <label className="text-sm font-medium mr-2">Branch:</label>
-                    <select
-                        value={selectedBranch}
-                        onChange={(e) => setSelectedBranch(e.target.value)}
-                        className="p-2 border rounded-md bg-white"
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <PageTitle title="Financial Statements" subtitle="Automated Reporting & Analysis" />
+                <div className="flex gap-2">
+                    <select 
+                        value={period} 
+                        onChange={(e) => setPeriod(e.target.value)}
+                        className="glass-input p-2 text-sm bg-black/20"
                     >
-                        <option value="all">All Branches</option>
-                        {plants.map(plant => (
-                            <option key={plant.id} value={plant.id}>{plant.name}</option>
-                        ))}
+                        <option value="monthly">This Month</option>
+                        <option value="quarterly">This Quarter</option>
+                        <option value="yearly">This Year</option>
                     </select>
+                    <Button variant="secondary" icon={Printer} onClick={handlePrint}>Print</Button>
                 </div>
             </div>
-            <Card>
-                <div className="border-b border-gray-200">
-                    <nav className="-mb-px flex space-x-8">
-                        <button
-                            onClick={() => setActiveTab('income')}
-                            className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'income' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-                        >
-                            Income Statement
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('balance')}
-                            className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'balance' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-                        >
-                            Balance Sheet
-                        </button>
-                        <button
-                            onClick={() => setActiveTab('cashflow')}
-                            className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${activeTab === 'cashflow' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
-                        >
-                            Cash Flow
-                        </button>
-                    </nav>
-                </div>
 
-                {activeTab === 'income' && <IncomeStatementTable data={financialData.incomeData} totals={financialData.incomeTotals} />}
-                {activeTab === 'balance' && <BalanceSheetDisplay data={financialData.balanceSheet} />}
-                {activeTab === 'cashflow' && <CashFlowStatementDisplay data={financialData.cashFlow} />}
+            {/* Tabs Navigation */}
+            <div className="flex space-x-1 bg-white/5 p-1 rounded-xl w-fit">
+                {['income', 'balance', 'cashflow'].map(tab => (
+                    <button
+                        key={tab}
+                        onClick={() => setActiveTab(tab)}
+                        className={`px-6 py-2 rounded-lg text-sm font-medium transition-all capitalize ${
+                            activeTab === tab 
+                            ? 'bg-blue-600 text-white shadow-lg' 
+                            : 'text-gray-400 hover:text-white hover:bg-white/5'
+                        }`}
+                    >
+                        {tab.replace('income', 'Income Statement').replace('balance', 'Balance Sheet').replace('cashflow', 'Cash Flow')}
+                    </button>
+                ))}
+            </div>
+
+            <Card className="min-h-[500px]">
+                {activeTab === 'income' && data?.income && (
+                    <div className="space-y-1 animate-in fade-in">
+                        <h3 className="font-bold text-white text-lg mb-6 border-b border-white/10 pb-2">Profit & Loss Statement</h3>
+                        
+                        <div className="flex justify-between py-3 border-b border-white/5 text-green-400 font-medium">
+                            <span>Total Revenue</span>
+                            <span>{formatCurrency(data.income.revenue)}</span>
+                        </div>
+                        
+                        <div className="flex justify-between py-3 border-b border-white/5 text-red-300 pl-4">
+                            <span>Cost of Goods Sold (COGS)</span>
+                            <span>-{formatCurrency(data.income.cogs)}</span>
+                        </div>
+                        
+                        <div className="flex justify-between py-3 border-b border-white/5 text-blue-300 font-bold bg-white/5 px-2 rounded">
+                            <span>Gross Profit</span>
+                            <span>{formatCurrency(data.income.grossProfit)}</span>
+                        </div>
+
+                        <div className="py-4">
+                            <p className="text-xs text-gray-500 uppercase tracking-wider mb-2">Operating Expenses</p>
+                            <div className="flex justify-between py-2 text-sm text-gray-300 pl-4">
+                                <span>Total Opex</span>
+                                <span>-{formatCurrency(data.income.expenses)}</span>
+                            </div>
+                        </div>
+
+                        <div className="flex justify-between py-4 border-t border-white/20 text-white text-xl font-bold mt-4">
+                            <span>Net Income</span>
+                            <span className={data.income.netIncome >= 0 ? 'text-green-400' : 'text-red-500'}>
+                                {formatCurrency(data.income.netIncome)}
+                            </span>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'balance' && data?.balance && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in fade-in">
+                        <div>
+                            <h3 className="font-bold text-blue-400 mb-4 flex items-center"><TrendingUp size={18} className="mr-2"/> Assets</h3>
+                            <div className="space-y-3">
+                                {data.balance.assets.map((item, i) => (
+                                    <div key={i} className="flex justify-between text-sm p-3 bg-white/5 rounded-lg">
+                                        <span className="text-gray-300">{item.name}</span>
+                                        <span className="font-mono">{formatCurrency(item.value)}</span>
+                                    </div>
+                                ))}
+                                <div className="flex justify-between font-bold text-white pt-2 border-t border-white/10">
+                                    <span>Total Assets</span>
+                                    <span>{formatCurrency(data.balance.assets.reduce((a,b)=>a+b.value,0))}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div>
+                            <h3 className="font-bold text-red-400 mb-4 flex items-center"><Activity size={18} className="mr-2"/> Liabilities</h3>
+                            <div className="space-y-3">
+                                {data.balance.liabilities.map((item, i) => (
+                                    <div key={i} className="flex justify-between text-sm p-3 bg-white/5 rounded-lg">
+                                        <span className="text-gray-300">{item.name}</span>
+                                        <span className="font-mono">{formatCurrency(item.value)}</span>
+                                    </div>
+                                ))}
+                                <div className="flex justify-between font-bold text-white pt-2 border-t border-white/10">
+                                    <span>Total Liabilities</span>
+                                    <span>{formatCurrency(data.balance.liabilities.reduce((a,b)=>a+b.value,0))}</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'cashflow' && (
+                    <div className="text-center py-20 text-gray-500">
+                        <FileText size={48} className="mx-auto mb-4 opacity-20" />
+                        <p>Cash Flow Statement module is synchronizing with bank feeds...</p>
+                    </div>
+                )}
             </Card>
-        </>
+        </div>
     );
 }

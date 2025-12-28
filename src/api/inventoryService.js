@@ -1,97 +1,81 @@
-// src/api/inventoryService.js
-import httpClient from './httpClient';
+import apiClient from './apiClient';
 
-// Asset functions
-const getAssets = async () => {
-  const { data } = await httpClient.get('/inventory/assets');
-  return data;
+// --- Inventory & Stock ---
+export const getInventorySummary = async () => {
+    const res = await apiClient.get('/api/v2/inventory/summary');
+    return res.data;
 };
 
-const addAsset = async (assetData) => {
-  const { data } = await httpClient.post('/inventory/assets', assetData);
-  return data;
+export const getStockInHistory = async () => {
+    const res = await apiClient.get('/api/v2/inventory/stock-in-history');
+    return res.data;
 };
 
-// Loan functions
-const getLoans = async () => {
-  const { data } = await httpClient.get('/inventory/loans');
-  return data;
+export const addStockIn = async (data) => {
+    const res = await apiClient.post('/api/v2/inventory/stock-in', data);
+    return res.data;
 };
 
-const addLoan = async (loanData) => {
-  const { data } = await httpClient.post('/inventory/loans', loanData);
-  return data;
+// --- Cylinders (Fixed) ---
+export const getCylinders = async () => {
+    const res = await apiClient.get('/api/v2/inventory/cylinders');
+    return res.data;
 };
 
-const deleteLoan = async (loanId) => {
-  await httpClient.delete(`/inventory/loans/${loanId}`);
+export const addCylinder = async (data) => {
+    const res = await apiClient.post('/api/v2/inventory/cylinders', data);
+    return res.data;
 };
 
-// Cylinder functions
-const getCylinders = async () => {
-  const { data } = await httpClient.get('/inventory/cylinders');
-  return data;
+export const deleteCylinder = async (id) => {
+    const res = await apiClient.delete(`/api/v2/inventory/cylinders/${id}`);
+    return res.data;
 };
 
-const addCylinder = async (cylinderData) => {
-  const { data } = await httpClient.post('/inventory/cylinders', cylinderData);
-  return data;
+// --- Assets (Fixed) ---
+export const getAssets = async () => {
+    const res = await apiClient.get('/api/v2/inventory/assets');
+    return res.data;
 };
 
-const deleteCylinder = async (cylinderId) => {
-  await httpClient.delete(`/inventory/cylinders/${cylinderId}`);
+export const addAsset = async (data) => {
+    const res = await apiClient.post('/api/v2/inventory/assets', data);
+    return res.data;
 };
 
-// Stock-in function
-const addStockIn = async (stockInData) => {
-  const { data } = await httpClient.post('/inventory/stock-in', stockInData);
-  return data;
+export const deleteAsset = async (id) => {
+    const res = await apiClient.delete(`/api/v2/inventory/assets/${id}`);
+    return res.data;
 };
 
-// Financials functions
-const getFinancialStatements = async (branchId = 'all') => {
-  const { data } = await httpClient.get('/financials/statements', {
-    params: { branchId }
-  });
-  return data;
+// --- Loans (Fixed) ---
+export const getLoans = async () => {
+    const res = await apiClient.get('/api/v2/inventory/loans');
+    return res.data;
 };
 
-// Revenue Assurance function
-const getRevenueAssuranceReport = async () => {
-  const { data } = await httpClient.get('/financials/revenue-assurance');
-  return data;
+export const addLoan = async (data) => {
+    const res = await apiClient.post('/api/v2/inventory/loans', data);
+    return res.data;
 };
 
-// Inventory Summary function for Dashboard and Inventory
-const getInventorySummary = async () => {
-  const { data } = await httpClient.get('/inventory/summary');
-  return data;
+export const deleteLoan = async (id) => {
+    const res = await apiClient.delete(`/api/v2/inventory/loans/${id}`);
+    return res.data;
 };
 
-const getTaxComplianceReport = async () => {
-  const { data } = await httpClient.get('/financials/tax-compliance');
-  return data;
+// --- Reports (Shared) ---
+export const getFinancialStatements = async (period = 'monthly') => {
+    const res = await apiClient.get('/api/v2/financials/statements', { params: { period } });
+    return res.data;
 };
 
-const getLpgStockInHistory = async () => {
-  const { data } = await httpClient.get('/inventory/stock-in-history');
-  return data;
+export const getTaxComplianceReport = async () => {
+    const res = await apiClient.get('/api/v2/financials/tax-compliance');
+    return res.data;
 };
 
-// --- Export all service functions ---
-export {
-  getAssets,
-  addAsset,
-  getLoans,
-  addLoan,
-  deleteLoan,
-  getCylinders,
-  addCylinder,
-  deleteCylinder,
-  addStockIn,
-  getFinancialStatements,
-  getRevenueAssuranceReport,
-  getInventorySummary,
-  getTaxComplianceReport,
-  getLpgStockInHistory,
+export const getRevenueAssuranceReport = async () => {
+    const res = await apiClient.get('/api/v2/financials/revenue-assurance');
+    return res.data;
 };

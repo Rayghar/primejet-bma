@@ -1,12 +1,8 @@
-// =======================================================================
-// src/components/shared/Card.js (NEW)
-// A reusable card component for consistent styling.
-// =======================================================================
 import React from 'react';
 
-export default function Card({ children, className = '', id = '' }) {
+export default function Card({ children, className = '', noPadding = false }) {
     return (
-        <div id={id} className={`bg-white p-6 rounded-lg shadow-md ${className}`}>
+        <div className={`glass rounded-2xl border border-white/5 ${noPadding ? '' : 'p-6'} ${className}`}>
             {children}
         </div>
     );

@@ -1,339 +1,264 @@
-// src/views/02-Operations/Inventory.js (Refactored & Reimagined)
-import React, { useState, useEffect, useMemo, useCallback } from 'react'; // Added useCallback
-import { getAssets, addCylinder, deleteCylinder, getCylinders, addStockIn, getInventorySummary, getLpgStockInHistory } from '../../api/inventoryService'; // Import new service functions
-import { formatCurrency, formatDate } from '../../utils/formatters';
-import { getDashboardKpis } from '../../api/analyticsService'; // For currentBulkLpgKg in gauge
-
+import React, { useState, useEffect } from 'react';
+import { getInventorySummary, getStockInHistory, getCylinders, addCylinder, deleteCylinder, addStockIn } from '../../api/inventoryService';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
-import Notification from '../../components/shared/Notification';
 import Modal from '../../components/shared/Modal';
-import { PlusCircle, Trash2, Factory, Box, Package, AlertTriangle, DollarSign, History } from 'lucide-react'; // Added History icon
+import { Package, AlertTriangle, TrendingUp, History, PlusCircle, Trash2, Factory } from 'lucide-react';
 
-// --- StockGauge Component (remains unchanged) ---
-const StockGauge = ({ percentage, stockKg }) => {
-    const circumference = 2 * Math.PI * 52;
-    const offset = circumference - (percentage / 100) * circumference;
-    let strokeColor = 'stroke-green-500';
-    if (percentage < 50) strokeColor = 'stroke-yellow-500';
-    if (percentage < 25) strokeColor = 'stroke-red-500';
+export default function Inventory() {
+    const [summary, setSummary] = useState(null);
+    const [history, setHistory] = useState([]);
+    const [cylinders, setCylinders] = useState([]);
+    const [loading, setLoading] = useState(true);
+    
+    // Modal States
+    const [showStockModal, setShowStockModal] = useState(false);
+    const [showCylinderModal, setShowCylinderModal] = useState(false);
+
+    // Initial Data Load
+    useEffect(() => {
+        refreshData();
+    }, []);
+
+    const refreshData = async () => {
+        setLoading(true);
+        try {
+            const [sum, hist, cyl] = await Promise.all([
+                getInventorySummary(),
+                getStockInHistory(),
+                getCylinders()
+            ]);
+            setSummary(sum);
+            setHistory(hist);
+            setCylinders(cyl);
+        } catch (e) {
+            console.error("Inventory Sync Failed", e);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleRemoveCylinder = async (id) => {
+        if (!window.confirm("Delete this cylinder batch?")) return;
+        await deleteCylinder(id);
+        refreshData();
+    };
+
+    // Calculation for Gauge
+    const stockPercent = summary ? (summary.currentStock / summary.totalCapacity) * 100 : 0;
+
+    if (loading) return <div className="p-8 text-center text-blue-400 animate-pulse">Loading Inventory Intelligence...</div>;
+
     return (
-        <div className="relative w-48 h-48">
-            <svg className="w-full h-full" viewBox="0 0 120 120"><circle className="stroke-current text-gray-200" strokeWidth="10" fill="transparent" r="52" cx="60" cy="60" /><circle className={`stroke-current ${strokeColor} transform -rotate-90 origin-center`} strokeWidth="10" strokeLinecap="round" fill="transparent" r="52" cx="60" cy="60" style={{ strokeDasharray: circumference, strokeDashoffset: offset, transition: 'stroke-dashoffset 0.5s ease-in-out' }} /></svg>
-            <div className="absolute inset-0 flex flex-col items-center justify-center"><span className="text-3xl font-bold text-gray-800">{Math.round(stockKg).toLocaleString()}</span><span className="text-sm text-gray-500">kg remaining</span></div>
+        <div className="space-y-6">
+            <div className="flex justify-between items-center">
+                <PageTitle title="Inventory Intelligence" subtitle="Stock Levels & Batch Profitability" />
+                <div className="flex gap-2">
+                    <Button onClick={() => setShowCylinderModal(true)} variant="secondary" icon={Package}>Cylinders</Button>
+                    <Button onClick={() => setShowStockModal(true)} icon={PlusCircle}>Log Stock-In</Button>
+                </div>
+            </div>
+
+            {/* TOP ROW: Gauge & Alerts */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Live Gauge */}
+                <div className="glass-card flex flex-col items-center justify-center relative overflow-hidden">
+                    <div className="absolute inset-0 bg-blue-600/5"></div>
+                    <h3 className="font-bold text-gray-400 mb-6 uppercase tracking-wider text-xs z-10">Current LPG Level</h3>
+                    
+                    <div className="relative w-48 h-48 flex items-center justify-center">
+                        <svg className="w-full h-full transform -rotate-90">
+                            <circle cx="96" cy="96" r="88" className="stroke-white/5" strokeWidth="12" fill="none" />
+                            <circle 
+                                cx="96" cy="96" r="88" 
+                                className={`${stockPercent < 20 ? 'stroke-red-500' : 'stroke-blue-500'} transition-all duration-1000`} 
+                                strokeWidth="12" 
+                                fill="none" 
+                                strokeDasharray={553} 
+                                strokeDashoffset={553 - (553 * stockPercent) / 100} 
+                                strokeLinecap="round"
+                            />
+                        </svg>
+                        <div className="absolute text-center">
+                            <span className="text-4xl font-bold text-white block">{summary?.currentStock?.toLocaleString() || 0}</span>
+                            <span className="text-xs text-gray-400 uppercase">Kilograms</span>
+                        </div>
+                    </div>
+                    <p className="text-xs text-gray-500 mt-4 z-10">Total Capacity: {summary?.totalCapacity?.toLocaleString()} kg</p>
+                </div>
+
+                {/* Alerts & Quick Stats */}
+                <div className="flex flex-col gap-6">
+                    <div className="glass-card flex-1 flex flex-col justify-center">
+                        <h3 className="font-bold text-gray-400 mb-4 uppercase tracking-wider text-xs">System Alerts</h3>
+                        {stockPercent < 20 ? (
+                            <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-xl flex items-start">
+                                <AlertTriangle className="text-red-500 mr-3 mt-0.5" size={20} />
+                                <div>
+                                    <h4 className="text-red-400 font-bold text-sm">Low Stock Warning</h4>
+                                    <p className="text-red-300/70 text-xs mt-1">Reserves are critical. Re-order immediately.</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="bg-green-500/10 border border-green-500/20 p-4 rounded-xl flex items-start">
+                                <Factory className="text-green-500 mr-3 mt-0.5" size={20} />
+                                <div>
+                                    <h4 className="text-green-400 font-bold text-sm">Optimal Levels</h4>
+                                    <p className="text-green-300/70 text-xs mt-1">Operations running normally.</p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    
+                    {/* Cylinder Summary */}
+                    <div className="glass-card flex-1">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="font-bold text-gray-400 uppercase tracking-wider text-xs">Cylinder Assets</h3>
+                            <span className="text-xs text-blue-400">{cylinders.reduce((a,b)=>a+b.quantity,0)} Total</span>
+                        </div>
+                        <div className="space-y-2 max-h-32 overflow-y-auto pr-2">
+                            {cylinders.map(c => (
+                                <div key={c.id} className="flex justify-between text-sm p-2 bg-white/5 rounded-lg">
+                                    <span className="text-gray-300">{c.size}</span>
+                                    <div className="flex items-center gap-3">
+                                        <span className="font-mono font-bold text-white">{c.quantity}</span>
+                                        <button onClick={() => handleRemoveCylinder(c.id)} className="text-red-400 hover:text-red-300"><Trash2 size={14}/></button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* BOTTOM ROW: Profitability Table */}
+            <div className="glass-card">
+                <div className="flex items-center justify-between mb-6">
+                    <h3 className="font-bold text-white flex items-center">
+                        <TrendingUp className="mr-2 text-green-500" size={20}/> Batch Profitability Analysis
+                    </h3>
+                    <button className="glass-button-secondary px-3 py-1 text-xs">Export CSV</button>
+                </div>
+                
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm text-gray-400">
+                        <thead className="text-xs uppercase bg-white/5 text-gray-300 font-semibold">
+                            <tr>
+                                <th className="p-4 rounded-tl-xl">Date</th>
+                                <th className="p-4">Supplier</th>
+                                <th className="p-4 text-right">Cost</th>
+                                <th className="p-4 text-right">Est. Revenue</th>
+                                <th className="p-4 text-right">Net Profit</th>
+                                <th className="p-4 text-center">Margin</th>
+                                <th className="p-4 rounded-tr-xl">Progress</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-white/5">
+                            {history.length === 0 ? (
+                                <tr><td colSpan="7" className="p-8 text-center text-gray-500">No stock history available.</td></tr>
+                            ) : history.map((batch, i) => (
+                                <tr key={i} className="hover:bg-white/5 transition-colors">
+                                    <td className="p-4 text-white">{new Date(batch.purchaseDate).toLocaleDateString()}</td>
+                                    <td className="p-4">{batch.supplier}</td>
+                                    <td className="p-4 text-right">₦{batch.totalCost?.toLocaleString()}</td>
+                                    <td className="p-4 text-right text-gray-300">₦{batch.estimatedActualRevenue?.toLocaleString()}</td>
+                                    <td className={`p-4 text-right font-bold ${batch.profitLoss >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                        {batch.profitLoss >= 0 ? '+' : ''}{batch.profitLoss?.toLocaleString()}
+                                    </td>
+                                    <td className="p-4 text-center">
+                                        <span className={`px-2 py-1 rounded text-xs font-bold ${batch.profitMargin > 15 ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                            {batch.profitMargin}%
+                                        </span>
+                                    </td>
+                                    <td className="p-4">
+                                        <div className="flex items-center space-x-2">
+                                            <div className="w-16 bg-gray-700 h-1.5 rounded-full overflow-hidden">
+                                                <div className="bg-blue-500 h-full" style={{ width: `${batch.salesProgress}%` }}></div>
+                                            </div>
+                                            <span className="text-[10px]">{batch.salesProgress}%</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            {/* Modals */}
+            {showStockModal && (
+                <AddStockModal onClose={() => setShowStockModal(false)} onRefresh={refreshData} />
+            )}
+            {showCylinderModal && (
+                <AddCylinderModal onClose={() => setShowCylinderModal(false)} onRefresh={refreshData} />
+            )}
         </div>
     );
-};
+}
 
-// --- AddCylinderForm Component (remains unchanged) ---
-const AddCylinderForm = ({ onSuccess, onError }) => {
-    const [formData, setFormData] = useState({ size: '12.5 kg', quantity: '' });
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+// --- Sub-components (Modals) ---
+
+const AddStockModal = ({ onClose, onRefresh }) => {
+    const [form, setForm] = useState({ quantityKg: '', costPerKg: '', supplier: '', purchaseDate: new Date().toISOString().split('T')[0] });
+    
     const handleSubmit = async (e) => {
         e.preventDefault();
-        setIsSubmitting(true);
-        try {
-            await addCylinder(formData);
-            onSuccess(`${formData.quantity} x ${formData.size} cylinders added.`);
-            setFormData({ size: '12.5 kg', quantity: '' });
-        } catch (error) {
-            console.error("Add Cylinder Error:", error);
-            onError(error.response?.data?.message || 'Failed to add cylinders.');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
-    return (
-        <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-            <input type="text" name="size" value={formData.size} onChange={handleChange} placeholder="Cylinder Size (e.g., 12.5 kg)" className="w-full p-2 border rounded-md" required />
-            <input type="number" name="quantity" value={formData.quantity} onChange={handleChange} placeholder="Quantity" className="w-full p-2 border rounded-md" required />
-            <Button type="submit" disabled={isSubmitting} icon={PlusCircle} className="w-full">Add Batch</Button>
-        </form>
-    );
-};
-
-// --- LogStockInModal Component (remains unchanged) ---
-const LogStockInModal = ({ onClose, onSuccess }) => {
-    const [formData, setFormData] = useState({
-        quantityKg: '',
-        supplier: '',
-        purchaseDate: new Date().toISOString().split('T')[0],
-        costPerKg: '',
-        targetSalePricePerKg: '',
-    });
-    const [isSubmitting, setIsSubmitting] = useState(false);
-
-    const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
-
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setIsSubmitting(true);
-
-        if (!formData.quantityKg || !formData.supplier || !formData.purchaseDate || !formData.costPerKg || !formData.targetSalePricePerKg) {
-            onSuccess('Please fill in all required fields.', 'error');
-            setIsSubmitting(false);
-            return;
-        }
-
-        try {
-            await addStockIn({
-                ...formData,
-                quantityKg: parseFloat(formData.quantityKg),
-                costPerKg: parseFloat(formData.costPerKg),
-                targetSalePricePerKg: parseFloat(formData.targetSalePricePerKg),
-            });
-            onSuccess(`Successfully logged a stock-in of ${formData.quantityKg} kg.`);
-            onClose();
-        } catch (error) {
-            console.error("Stock-in Error:", error);
-            onSuccess(error.response?.data?.message || 'Failed to log stock-in.', 'error');
-        } finally {
-            setIsSubmitting(false);
-        }
+        await addStockIn(form);
+        onRefresh();
+        onClose();
     };
 
     return (
-        <Modal title="Log New Stock-In" onClose={onClose}>
+        <Modal title="Log Bulk Stock-In" onClose={onClose}>
             <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                    <label className="block text-sm font-medium text-gray-700">Quantity (KG)</label>
-                    <input type="number" name="quantityKg" value={formData.quantityKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g., 2500" required />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Cost / kg (₦)</label>
-                        <input type="number" name="costPerKg" value={formData.costPerKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g., 850" required />
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Target Sale Price / kg (₦)</label>
-                        <input type="number" name="targetSalePricePerKg" value={formData.targetSalePricePerKg} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" placeholder="e.g., 1100" required />
-                    </div>
+                    <label className="block text-gray-400 text-xs mb-1">Quantity (KG)</label>
+                    <input type="number" className="glass-input w-full p-2" value={form.quantityKg} onChange={e => setForm({...form, quantityKg: e.target.value})} required />
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700">Supplier</label>
-                    <input type="text" name="supplier" value={formData.supplier} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required />
+                    <label className="block text-gray-400 text-xs mb-1">Cost per KG (₦)</label>
+                    <input type="number" className="glass-input w-full p-2" value={form.costPerKg} onChange={e => setForm({...form, costPerKg: e.target.value})} required />
                 </div>
                 <div>
-                    <label className="block text-sm font-medium text-gray-700">Purchase Date</label>
-                    <input type="date" name="purchaseDate" value={formData.purchaseDate} onChange={handleChange} className="mt-1 w-full p-2 border rounded-md" required />
+                    <label className="block text-gray-400 text-xs mb-1">Supplier</label>
+                    <input type="text" className="glass-input w-full p-2" value={form.supplier} onChange={e => setForm({...form, supplier: e.target.value})} required />
                 </div>
                 <div className="flex justify-end pt-4">
-                    <Button type="submit" disabled={isSubmitting}>
-                        {isSubmitting ? 'Logging...' : 'Confirm Stock-In'}
-                    </Button>
+                    <Button type="submit" className="glass-button">Confirm Stock-In</Button>
                 </div>
             </form>
         </Modal>
     );
 };
 
-// --- Main Inventory View Component ---
-export default function Inventory() {
-    const [showStockInModal, setShowStockInModal] = useState(false);
-    const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
-    
-    const [cylinders, setCylinders] = useState([]);
-    const [inventorySummary, setInventorySummary] = useState({ currentBulkLpgKg: 0, totalCylinders: 0, lowStockAlert: false, totalFixedAssetsValue: 0, totalLoanPrincipal: 0 }); // Initialize all fields
-    const [stockInHistory, setStockInHistory] = useState([]); // New state for stock-in history
-    const [loading, setLoading] = useState(true);
+const AddCylinderModal = ({ onClose, onRefresh }) => {
+    const [form, setForm] = useState({ size: '12.5 kg', quantity: '' });
 
-    // Function to fetch all data for the Inventory screen, wrapped in useCallback
-    const fetchData = useCallback(async () => {
-        setLoading(true);
-        try {
-            const fetchedCylinders = await getCylinders();
-            const invSummary = await getInventorySummary(); // Fetch comprehensive inventory summary
-            const lpgHistory = await getLpgStockInHistory(); // Fetch new LPG stock-in history
-            
-            setCylinders(fetchedCylinders);
-            setInventorySummary(invSummary);
-            setStockInHistory(lpgHistory);
-        } catch (error) {
-            console.error('Failed to fetch inventory data:', error);
-            handleError('Failed to load inventory data.');
-        } finally {
-            setLoading(false);
-        }
-    }, []); // Empty dependency array for useCallback means fetchData is stable
-
-    // Fetch data on component mount and whenever a change occurs (e.g., after adding/removing)
-    useEffect(() => {
-        fetchData();
-    }, [fetchData]); // fetchData is now a stable dependency
-
-    // Memoized calculation for the stock gauge percentage
-    const bulkStockPercentage = useMemo(() => {
-        const maxCapacity = 20000; // Assuming a fixed max capacity for the gauge, or fetch from config
-        return maxCapacity > 0 ? (inventorySummary.currentBulkLpgKg / maxCapacity) * 100 : 0;
-    }, [inventorySummary.currentBulkLpgKg]);
-    
-    // Notification handlers
-    const handleSuccess = (message) => {
-        setNotification({ show: true, message, type: 'success' });
-        setShowStockInModal(false); // Close modal on success
-        fetchData(); // Re-fetch all data to update the lists and summaries
-    };
-    
-    const handleError = (msg) => setNotification({ show: true, message: msg, type: 'error' });
-
-    // Handler for removing a cylinder batch
-    const handleRemoveCylinder = async (cylinderId, cylinderName) => {
-        if (window.confirm(`Are you sure you want to remove the cylinder batch "${cylinderName}"?`)) {
-            try {
-                await deleteCylinder(cylinderId);
-                handleSuccess(`Cylinder batch "${cylinderName}" removed.`);
-            } catch (error) {
-                console.error("Remove Cylinder Error:", error);
-                handleError(error.response?.data?.message || 'Failed to remove cylinder.');
-            }
-        }
+    const handleSubmit = async (e) => {
+        e.preventDefault();
+        await addCylinder(form);
+        onRefresh();
+        onClose();
     };
 
     return (
-        <>
-            <Notification notification={notification} setNotification={setNotification} />
-            {showStockInModal && <LogStockInModal onClose={() => setShowStockInModal(false)} onSuccess={handleSuccess} />}
-            
-            <div className="flex justify-between items-center">
-                <PageTitle title="Inventory Command Center" subtitle="Live tracking of bulk LPG and company assets." />
-                <Button onClick={() => setShowStockInModal(true)} icon={PlusCircle}>Log Stock-In</Button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Bulk LPG Stock Overview */}
-                <div className="lg:col-span-1">
-                    <Card className="flex flex-col items-center justify-center p-6">
-                        <h3 className="text-lg font-semibold text-gray-700 mb-4 flex items-center"><Factory className="mr-2 text-indigo-500" />Bulk LPG Stock</h3>
-                        {loading ? <p>Calculating...</p> : (
-                            <>
-                                <StockGauge percentage={bulkStockPercentage} stockKg={inventorySummary.currentBulkLpgKg} />
-                                {inventorySummary.lowStockAlert && (
-                                    <div className="mt-4 p-2 bg-red-100 text-red-800 rounded-md flex items-center text-sm font-semibold">
-                                        <AlertTriangle size={18} className="mr-2" />
-                                        <span>LOW STOCK ALERT: Below threshold!</span>
-                                    </div>
-                                )}
-                                <div className="mt-4 space-y-2 text-sm w-full">
-                                    <div className="flex justify-between">
-                                        <span>Total Cylinders:</span>
-                                        <span className="font-semibold">{inventorySummary.totalCylinders.toLocaleString()}</span>
-                                    </div>
-                                </div>
-                            </>
-                        )}
-                    </Card>
+        <Modal title="Add Cylinder Assets" onClose={onClose}>
+            <form onSubmit={handleSubmit} className="space-y-4">
+                <div>
+                    <label className="block text-gray-400 text-xs mb-1">Size</label>
+                    <select className="glass-input w-full p-2 bg-slate-800" value={form.size} onChange={e => setForm({...form, size: e.target.value})}>
+                        <option>3 kg</option><option>5 kg</option><option>6 kg</option><option>12.5 kg</option><option>25 kg</option><option>50 kg</option>
+                    </select>
                 </div>
-                
-                {/* Cylinder Assets Table */}
-                <div className="lg:col-span-2">
-                    <Card>
-                        <h3 className="text-lg font-semibold text-gray-700 mb-4 flex items-center"><Package className="mr-2 text-sky-500" />Cylinder Assets (Total Owned)</h3>
-                        {loading ? <p>Loading cylinder data...</p> : (
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left">
-                                    <thead>
-                                        <tr className="border-b bg-gray-50">
-                                            <th className="p-4 text-sm font-semibold text-gray-600">Cylinder Size</th>
-                                            <th className="p-4 text-sm font-semibold text-gray-600 text-right">Total Quantity</th>
-                                            <th className="p-4 text-sm font-semibold text-gray-600 text-right">Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {cylinders.length > 0 ? cylinders.map(row => (
-                                            <tr key={row.id} className="border-b hover:bg-gray-50">
-                                                <td className="p-4 font-medium">{row.size}</td>
-                                                <td className="p-4 text-right font-semibold">{row.quantity.toLocaleString()}</td>
-                                                <td className="p-4 text-right">
-                                                    <Button onClick={() => handleRemoveCylinder(row.id, row.size)} variant="danger" icon={Trash2} />
-                                                </td>
-                                            </tr>
-                                        )) : (
-                                            <tr><td colSpan="3" className="text-center p-4 text-gray-500">No cylinders recorded.</td></tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                        <div className="border-t mt-4 pt-4">
-                             <h4 className="text-lg font-semibold text-gray-700 mb-4">Add New Cylinder Batch</h4>
-                             <AddCylinderForm onSuccess={handleSuccess} onError={handleError} />
-                        </div>
-                    </Card>
+                <div>
+                    <label className="block text-gray-400 text-xs mb-1">Quantity</label>
+                    <input type="number" className="glass-input w-full p-2" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value})} required />
                 </div>
-
-                {/* LPG Stock-In History & Profitability */}
-                <div className="lg:col-span-3"> {/* Span full width */}
-                    <Card>
-                        <h3 className="text-lg font-semibold text-gray-700 mb-4 flex items-center"><History className="mr-2 text-blue-500" />LPG Stock-In History & Profitability</h3>
-                        {loading ? <p>Loading stock-in history...</p> : (
-                            <div className="overflow-x-auto">
-                                <table className="w-full text-left text-sm">
-                                    <thead>
-                                        <tr className="border-b bg-gray-50">
-                                            <th className="p-2">Date</th>
-                                            <th className="p-2">Supplier</th>
-                                            <th className="p-2">Quantity (Kg)</th>
-                                            <th className="p-2 text-right">Cost (₦/kg)</th>
-                                            <th className="p-2 text-right">Expected Revenue</th>
-                                            <th className="p-2 text-right">Actual Revenue</th>
-                                            <th className="p-2 text-right">Profit/Loss</th>
-                                            <th className="p-2 text-right">Profit Margin (%)</th>
-                                            <th className="p-2">Sales Progress</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {stockInHistory.length > 0 ? stockInHistory.map(batch => (
-                                            <tr key={batch.id} className="border-b hover:bg-gray-50">
-                                                <td className="p-2">{formatDate(batch.purchaseDate)}</td>
-                                                <td className="p-2">{batch.supplier}</td>
-                                                <td className="p-2">{batch.quantityKg.toLocaleString()}</td>
-                                                <td className="p-2 text-right">{formatCurrency(batch.costPerKg)}</td>
-                                                <td className="p-2 text-right">{formatCurrency(batch.expectedRevenue)}</td>
-                                                <td className="p-2 text-right">{formatCurrency(batch.estimatedActualRevenue)}</td>
-                                                <td className={`p-2 text-right font-semibold ${batch.profitLoss >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                    {formatCurrency(batch.profitLoss)}
-                                                </td>
-                                                <td className={`p-2 text-right font-semibold ${batch.profitMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                    {batch.profitMargin.toFixed(1)}%
-                                                </td>
-                                                <td className="p-2">
-                                                    <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                                        <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${batch.salesProgress}%` }}></div>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        )) : (
-                                            <tr><td colSpan="9" className="text-center p-4 text-gray-500">No LPG stock-in history found.</td></tr>
-                                        )}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </Card>
+                <div className="flex justify-end pt-4">
+                    <Button type="submit" className="glass-button">Add Batch</Button>
                 </div>
-
-                {/* Financial Assets & Liabilities Overview (from AssetAndLoan, but relevant here) */}
-                <div className="lg:col-span-3"> {/* Span full width */}
-                    <Card>
-                        <h3 className="text-lg font-semibold text-gray-700 mb-4 flex items-center"><DollarSign className="mr-2 text-green-500" />Financial Assets & Liabilities Overview</h3>
-                        {loading ? <p>Loading financial data...</p> : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="bg-blue-50 p-4 rounded-lg">
-                                    <p className="text-sm text-gray-600">Total Fixed Assets Value:</p>
-                                    <p className="text-2xl font-bold text-gray-800">{formatCurrency(inventorySummary.totalFixedAssetsValue || 0)}</p>
-                                </div>
-                                <div className="bg-red-50 p-4 rounded-lg">
-                                    <p className="text-sm text-gray-600">Total Loan Principal:</p>
-                                    <p className="text-2xl font-bold text-red-600">{formatCurrency(inventorySummary.totalLoanPrincipal || 0)}</p>
-                                </div>
-                            </div>
-                        )}
-                        <p className="text-sm text-gray-500 mt-4">For detailed asset and loan management, please visit the Financials : Assets & Loans section.</p>
-                    </Card>
-                </div>
-            </div>
-        </>
+            </form>
+        </Modal>
     );
-}
+};

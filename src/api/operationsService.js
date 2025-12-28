@@ -1,46 +1,42 @@
-// src/api/operationsService.js
-import httpClient from './httpClient';
+import apiClient from './apiClient';
 
-const getPlants = async () => {
-  const { data } = await httpClient.get('/operations/plants');
-  return data;
+// --- Logistics & Runs ---
+export const getUnassignedOrders = async (zoneId = null) => {
+    const params = zoneId ? { zoneId } : {};
+    const res = await apiClient.get('/runs/admin/unassigned-orders', { params });
+    return res.data.orders || [];
 };
 
-const addPlant = async (plantData) => {
-  const { data } = await httpClient.post('/operations/plants', plantData);
-  return data;
+export const getOnlineDrivers = async () => {
+    // Uses the V1 user endpoint but filters for drivers + online status
+    const res = await apiClient.get('/users', { 
+        params: { role: 'driver', isAvailableOnline: true } 
+    });
+    return res.data || [];
 };
 
-const deletePlant = async (plantId) => {
-  const { data } = await httpClient.delete(`/operations/plants/${plantId}`);
-  return data;
+export const createRunFromBatch = async (orderIds) => {
+    const res = await apiClient.post('/runs/admin/create-batch', { orderIds });
+    return res.data;
 };
 
-const getVans = async () => {
-  const { data } = await httpClient.get('/operations/vans');
-  return data;
+export const getActiveRuns = async () => {
+    const res = await apiClient.get('/runs/admin/active');
+    return res.data;
 };
 
-// NEW: Add maintenance log
-const addMaintenanceLog = async (plantId, logData) => {
-  const { data } = await httpClient.post(`/operations/plants/${plantId}/maintenance`, logData);
-  return data;
+// --- Plant Operations ---
+export const getPlants = async () => {
+    const res = await apiClient.get('/api/v2/operations/plants');
+    return res.data;
 };
 
-// NEW: Get maintenance logs for a plant
-const getMaintenanceLogs = async (plantId) => {
-  const { data } = await httpClient.get(`/operations/plants/${plantId}/maintenance`);
-  return data;
+export const getMaintenanceLogs = async (plantId) => {
+    const res = await apiClient.get(`/api/v2/operations/plants/${plantId}/maintenance`);
+    return res.data;
 };
 
-// NEW: Get plant daily output history
-const getPlantDailyOutputHistory = async (plantId, days = 7) => {
-  const { data } = await httpClient.get(`/operations/plants/${plantId}/daily-output-history`, { params: { days } });
-  return data;
-};
-
-
-export { 
-  getPlants, addPlant, deletePlant, getVans,
-  addMaintenanceLog, getMaintenanceLogs, getPlantDailyOutputHistory // Export new functions
+export const addMaintenanceLog = async (plantId, logData) => {
+    const res = await apiClient.post(`/api/v2/operations/plants/${plantId}/maintenance`, logData);
+    return res.data;
 };

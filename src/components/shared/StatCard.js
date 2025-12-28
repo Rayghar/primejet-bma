@@ -1,23 +1,29 @@
-// =======================================================================
-// src/components/shared/StatCard.js (NEW)
-// A component for displaying key performance indicators.
-// =======================================================================
 import React from 'react';
 
-export default function StatCard({ title, value, icon: Icon, color }) {
-    const colorClasses = {
-        green: 'from-green-500 to-green-600', blue: 'from-blue-500 to-blue-600',
-        indigo: 'from-indigo-500 to-indigo-600', purple: 'from-purple-500 to-purple-600',
+export default function StatCard({ title, value, icon: Icon, color, trend }) {
+    const colors = {
+        blue: 'text-blue-400 bg-blue-500/10',
+        green: 'text-green-400 bg-green-500/10',
+        purple: 'text-purple-400 bg-purple-500/10',
+        orange: 'text-orange-400 bg-orange-500/10',
     };
+
     return (
-        <div className={`bg-gradient-to-br ${colorClasses[color]} text-white p-6 rounded-xl shadow-lg`}>
+        <div className="glass rounded-2xl p-6 border border-white/5 hover:bg-white/5 transition-all">
             <div className="flex justify-between items-start">
-                <div className="flex flex-col">
-                    <p className="text-sm font-medium opacity-80">{title}</p>
-                    <p className="text-3xl font-bold mt-1">{value}</p>
+                <div>
+                    <p className="text-gray-400 text-sm font-medium uppercase tracking-wider">{title}</p>
+                    <h3 className="text-2xl font-bold text-white mt-2">{value}</h3>
+                    {trend && (
+                        <p className={`text-xs mt-2 flex items-center ${trend >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                            {trend > 0 ? '+' : ''}{trend}% from last month
+                        </p>
+                    )}
                 </div>
-                <div className="p-3 bg-white bg-opacity-20 rounded-lg"><Icon size={24} /></div>
+                <div className={`p-3 rounded-xl ${colors[color] || colors.blue}`}>
+                    <Icon size={24} />
+                </div>
             </div>
         </div>
     );
-};
+}
