@@ -5,12 +5,12 @@ export const getFinancialStatements = async (period = 'monthly') => {
     return res.data;
 };
 
-export const getTaxComplianceReport = async () => {
-    const res = await apiClient.get('/api/v2/financials/tax-compliance');
+export const getRevenueAssuranceReport = async () => {
+    const res = await apiClient.get('/api/v2/financials/revenue-assurance');
     return res.data;
 };
 
-export const getRevenueAssuranceReport = async () => {
-    const res = await apiClient.get('/api/v2/financials/revenue-assurance');
+export const getTaxComplianceReport = async () => {
+    const res = await apiClient.get('/api/v2/financials/tax-compliance');
     return res.data;
 };

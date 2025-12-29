@@ -23,7 +23,7 @@ export default function TaxCompliance() {
                     <div className="flex items-center mb-4">
                         <div className="p-3 bg-blue-500/20 rounded-full mr-3"><Landmark className="text-blue-400"/></div>
                         <div>
-                            <p className="text-xs text-blue-300 uppercase font-bold">VAT Payable</p>
+                            <p className="text-xs text-blue-300 uppercase font-bold">VAT Output Payable</p>
                             <p className="text-3xl font-bold text-white">{formatCurrency(report.vatPayable)}</p>
                         </div>
                     </div>
