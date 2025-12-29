@@ -1,30 +1,39 @@
 import React, { useState, useEffect } from 'react';
-import { getDashboardKpis, getSalesChartData } from '../api/analyticsService';
-import { getOnlineDrivers } from '../api/operationsService';
-import PageTitle from '../components/shared/PageTitle';
-import BarChart from '../components/charts/BarChart';
-import { TrendingUp, ShoppingCart, Truck, Users, Activity } from 'lucide-react';
+import { getDashboardKpis, getSalesChartData } from '../../api/analyticsService';
+import { getOnlineDrivers } from '../../api/operationsService';
+import PageTitle from '../../components/shared/PageTitle';
+import BarChart from '../../components/charts/BarChart';
+import { 
+    TrendingUp, ShoppingCart, Truck, Users, Activity, 
+    ArrowUpRight, AlertCircle, Zap, ExternalLink 
+} from 'lucide-react';
 
-// Reusable Glass Stat Card
-const GlassStatCard = ({ title, value, icon: Icon, colorClass }) => (
-    <div className={`glass-card relative overflow-hidden group`}>
-        <div className={`absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity ${colorClass}`}>
-            <Icon size={64} />
-        </div>
+// Enhanced Glass Card
+const StatCard = ({ title, value, icon: Icon, color, trend }) => (
+    <div className="glass-card relative overflow-hidden group hover:border-white/20 transition-all duration-300">
+        <div className={`absolute -right-6 -top-6 p-8 rounded-full opacity-10 group-hover:opacity-20 transition-all ${color} blur-xl`}></div>
         <div className="relative z-10">
-            <p className="text-blue-200 text-sm font-medium uppercase tracking-wider">{title}</p>
-            <h3 className="text-3xl font-bold text-white mt-1">{value}</h3>
+            <div className="flex justify-between items-start">
+                <div>
+                    <p className="text-gray-400 text-xs font-bold uppercase tracking-wider">{title}</p>
+                    <h3 className="text-3xl font-bold text-white mt-2">{value}</h3>
+                </div>
+                <div className={`p-3 rounded-xl bg-white/5 border border-white/10 ${color.replace('bg-', 'text-')}`}>
+                    <Icon size={24} />
+                </div>
+            </div>
+            {trend && (
+                <div className="mt-4 flex items-center text-xs font-medium text-green-400">
+                    <ArrowUpRight size={14} className="mr-1" />
+                    {trend} since last month
+                </div>
+            )}
         </div>
     </div>
 );
 
-export default function Dashboard() {
-    const [stats, setStats] = useState({ 
-        totalRevenue: 0, 
-        totalKgSold: 0, 
-        activeDeliveries: 0,
-        onlineDrivers: 0
-    });
+export default function Dashboard({ setActiveView }) {
+    const [stats, setStats] = useState({ totalRevenue: 0, totalKgSold: 0, activeDeliveries: 0, onlineDrivers: 0 });
     const [chartData, setChartData] = useState([]);
     const [loading, setLoading] = useState(true);
 
@@ -33,15 +42,12 @@ export default function Dashboard() {
             const [kpis, drivers, sales] = await Promise.all([
                 getDashboardKpis(),
                 getOnlineDrivers(),
-                getSalesChartData()
+                getSalesChartData('monthly')
             ]);
 
-            setStats({
-                ...kpis,
-                onlineDrivers: drivers.length
-            });
+            setStats({ ...kpis, onlineDrivers: drivers.length });
 
-            if (sales && sales.breakdown) {
+            if (sales?.breakdown) {
                 setChartData(sales.breakdown.map(item => ({
                     label: item.label,
                     value: item.revenue
@@ -56,78 +62,112 @@ export default function Dashboard() {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 30000); // Poll every 30s
+        const interval = setInterval(fetchData, 30000);
         return () => clearInterval(interval);
     }, []);
 
+    // Quick Actions Component
+    const QuickAction = ({ label, icon: Icon, view, color }) => (
+        <button 
+            onClick={() => setActiveView(view)}
+            className="flex items-center p-4 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/20 transition-all group w-full text-left"
+        >
+            <div className={`p-2 rounded-lg mr-4 ${color} text-white`}>
+                <Icon size={20} />
+            </div>
+            <div>
+                <h4 className="text-sm font-bold text-white group-hover:text-blue-300 transition-colors">{label}</h4>
+                <p className="text-[10px] text-gray-500">Jump to module</p>
+            </div>
+            <ExternalLink size={14} className="ml-auto text-gray-600 group-hover:text-white opacity-0 group-hover:opacity-100 transition-all" />
+        </button>
+    );
+
     return (
-        <div className="space-y-8">
+        <div className="space-y-8 animate-in fade-in duration-500">
+            {/* Header Area */}
             <div className="flex justify-between items-end">
-                <PageTitle title="Executive Dashboard" subtitle="Live Operational Overview" />
-                <div className="flex items-center space-x-2 text-green-400 text-sm bg-green-900/20 px-3 py-1 rounded-full border border-green-500/30">
+                <PageTitle title="Command Center" subtitle="Real-time Operational Intelligence" />
+                <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20 text-green-400 text-xs font-mono">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
                       <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
                     </span>
-                    <span>System Live</span>
+                    <span>SYSTEM ONLINE</span>
                 </div>
             </div>
 
             {/* KPI Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <GlassStatCard 
+                <StatCard 
                     title="Total Revenue" 
                     value={loading ? '...' : `₦${stats.totalRevenue.toLocaleString()}`} 
                     icon={TrendingUp} 
-                    colorClass="text-green-500" 
+                    color="bg-green-500" 
+                    trend="+12.5%"
                 />
-                <GlassStatCard 
-                    title="LPG Sold" 
+                <StatCard 
+                    title="LPG Output" 
                     value={loading ? '...' : `${stats.totalKgSold.toLocaleString()} kg`} 
                     icon={ShoppingCart} 
-                    colorClass="text-blue-500" 
+                    color="bg-blue-500" 
+                    trend="+5.2%"
                 />
-                <GlassStatCard 
-                    title="Active Runs" 
+                <StatCard 
+                    title="Live Deliveries" 
                     value={loading ? '...' : stats.activeDeliveries} 
                     icon={Truck} 
-                    colorClass="text-purple-500" 
+                    color="bg-purple-500" 
                 />
-                <GlassStatCard 
-                    title="Fleet Online" 
+                <StatCard 
+                    title="Active Fleet" 
                     value={loading ? '...' : stats.onlineDrivers} 
                     icon={Users} 
-                    colorClass="text-yellow-500" 
+                    color="bg-orange-500" 
                 />
             </div>
 
-            {/* Charts & Health */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Main Chart */}
                 <div className="lg:col-span-2 glass-card min-h-[400px]">
-                    <h3 className="text-xl font-bold text-white mb-6">Revenue Trend</h3>
+                    <div className="flex justify-between items-center mb-6">
+                        <h3 className="text-lg font-bold text-white flex items-center">
+                            <Activity size={20} className="mr-2 text-blue-400"/> Revenue Trajectory
+                        </h3>
+                        <select className="bg-black/20 border border-white/10 rounded-lg text-xs p-1 text-gray-400 outline-none">
+                            <option>Last 30 Days</option>
+                            <option>This Quarter</option>
+                        </select>
+                    </div>
                     <BarChart data={chartData} />
                 </div>
                 
-                <div className="glass-card">
-                    <h3 className="text-xl font-bold text-white mb-6">System Health</h3>
-                    <div className="space-y-4">
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <div className="flex items-center text-blue-200">
-                                <Activity size={18} className="mr-3" /> API Latency
-                            </div>
-                            <span className="text-green-400 font-mono">45ms</span>
+                {/* Right Column: Quick Actions & Health */}
+                <div className="space-y-6">
+                    {/* Quick Actions */}
+                    <div className="glass-card">
+                        <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center">
+                            <Zap size={16} className="mr-2 text-yellow-400"/> Quick Actions
+                        </h3>
+                        <div className="space-y-3">
+                            <QuickAction label="Dispatch Order" icon={Truck} view="Logistics" color="bg-blue-600" />
+                            <QuickAction label="Log Sale (POS)" icon={ShoppingCart} view="DailyLog" color="bg-green-600" />
+                            <QuickAction label="Customer Chat" icon={Users} view="SupportDesk" color="bg-purple-600" />
                         </div>
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <div className="flex items-center text-blue-200">
-                                <Users size={18} className="mr-3" /> Active Sessions
+                    </div>
+
+                    {/* System Alerts */}
+                    <div className="glass-card border-t-4 border-red-500">
+                        <h3 className="text-white font-bold mb-3 flex items-center">
+                            <AlertCircle size={18} className="mr-2 text-red-500"/> System Alerts
+                        </h3>
+                        <div className="space-y-2">
+                            <div className="text-xs text-gray-400 p-2 bg-white/5 rounded border-l-2 border-yellow-500">
+                                <span className="text-white font-bold">Low Stock:</span> Main Plant (Lekki) at 15% capacity.
                             </div>
-                            <span className="text-white font-mono">12</span>
-                        </div>
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <div className="flex items-center text-blue-200">
-                                <Truck size={18} className="mr-3" /> GPS Updates
+                            <div className="text-xs text-gray-400 p-2 bg-white/5 rounded border-l-2 border-blue-500">
+                                <span className="text-white font-bold">Audit:</span> 3 Unreconciled EOD reports pending.
                             </div>
-                            <span className="text-green-400 font-mono">Real-time</span>
                         </div>
                     </div>
                 </div>

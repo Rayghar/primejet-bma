@@ -9,12 +9,13 @@ export default function AuditLog() {
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        // You might need to add this endpoint to your admin.routes.js: 
-        // router.get('/logs', authMiddleware('admin'), adminController.getSystemLogs);
-        // For now, we simulate or fetch if available.
-        apiClient.get('/admin/logs')
-            .then(res => setLogs(res.data))
-            .catch(err => console.log("Logs not available via API yet"))
+        // ✅ FIX: Use the V2 audit log endpoint
+        apiClient.get('/api/v2/logs/audit')
+            .then(res => setLogs(res.data.logs || [])) // Handle pagination structure
+            .catch(err => {
+                console.error("Audit Logs Error:", err);
+                setLogs([]);
+            })
             .finally(() => setLoading(false));
     }, []);
 
@@ -23,17 +24,16 @@ export default function AuditLog() {
             <PageTitle title="System Audit Logs" subtitle="Security and operational events" />
             
             <Card className="p-0 overflow-hidden">
-                <div className="bg-gray-50 p-4 border-b flex justify-between items-center">
+                <div className="bg-white/5 p-4 border-b border-white/10 flex justify-between items-center">
                     <div className="relative w-64">
-                        <input type="text" placeholder="Search logs..." className="pl-9 pr-4 py-2 border rounded-lg w-full text-sm"/>
+                        <input type="text" placeholder="Search logs..." className="glass-input pl-9 pr-4 py-2 w-full text-sm"/>
                         <Search size={16} className="absolute left-3 top-3 text-gray-400"/>
                     </div>
-                    <button className="text-sm text-blue-600 font-medium">Export CSV</button>
                 </div>
                 
-                {loading ? <div className="p-8 text-center">Loading logs...</div> : (
-                    <table className="w-full text-sm text-left">
-                        <thead className="bg-white text-gray-500 font-medium border-b">
+                {loading ? <div className="p-8 text-center text-gray-500">Loading logs...</div> : (
+                    <table className="w-full text-sm text-left text-gray-400">
+                        <thead className="bg-white/5 text-gray-300 font-medium border-b border-white/10">
                             <tr>
                                 <th className="p-4">Timestamp</th>
                                 <th className="p-4">User</th>
@@ -41,19 +41,19 @@ export default function AuditLog() {
                                 <th className="p-4">IP Address</th>
                             </tr>
                         </thead>
-                        <tbody className="divide-y">
+                        <tbody className="divide-y divide-white/5">
                             {logs.length === 0 ? (
                                 <tr><td colSpan="4" className="p-8 text-center text-gray-500">No logs found.</td></tr>
                             ) : logs.map((log, i) => (
-                                <tr key={i} className="hover:bg-gray-50">
-                                    <td className="p-4 text-gray-600">{new Date(log.timestamp).toLocaleString()}</td>
-                                    <td className="p-4 font-medium">{log.userEmail}</td>
+                                <tr key={i} className="hover:bg-white/5">
+                                    <td className="p-4">{new Date(log.timestamp).toLocaleString()}</td>
+                                    <td className="p-4 font-medium text-white">{log.userEmail || log.userId}</td>
                                     <td className="p-4">
-                                        <span className="bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-xs">
+                                        <span className="bg-blue-500/20 text-blue-300 px-2 py-1 rounded-full text-xs border border-blue-500/30">
                                             {log.action}
                                         </span>
                                     </td>
-                                    <td className="p-4 font-mono text-xs">{log.ip}</td>
+                                    <td className="p-4 font-mono text-xs">{log.ipAddress}</td>
                                 </tr>
                             ))}
                         </tbody>

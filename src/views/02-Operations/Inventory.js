@@ -46,8 +46,11 @@ export default function Inventory() {
     };
 
     // Calculation for Gauge
-    const stockPercent = summary ? (summary.currentStock / summary.totalCapacity) * 100 : 0;
-
+    // ✅ FIX: Prevent NaN
+    const stockPercent = (summary && summary.totalCapacity > 0) 
+        ? (summary.currentStock / summary.totalCapacity) * 100 
+        : 0;
+        
     if (loading) return <div className="p-8 text-center text-blue-400 animate-pulse">Loading Inventory Intelligence...</div>;
 
     return (

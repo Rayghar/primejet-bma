@@ -5,8 +5,8 @@ import { useAuth } from '../hooks/useAuth'; // ✅ USE HOOK INSTEAD OF LOCALSTOR
 export const SocketContext = createContext();
 
 // ✅ PRODUCTION URL
-const SOCKET_URL = 'https://primejet-backend.onrender.com'; 
-
+//const SOCKET_URL = 'https://primejet-backend.onrender.com'; 
+const SOCKET_URL = 'http://localhost:3000';
 export const SocketProvider = ({ children }) => {
     const { user } = useAuth(); // ✅ Reactive: Updates immediately when you login
     const [socket, setSocket] = useState(null);

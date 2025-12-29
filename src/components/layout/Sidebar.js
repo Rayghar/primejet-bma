@@ -1,150 +1,151 @@
-// src/components/layout/Sidebar.js
 import React, { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
-import { NAV_ITEMS, USER_ROLES } from '../../utils/constants'; // USER_ROLES is imported but not directly used in NavItem's logic
-import { ChevronsLeft, ChevronsRight, LogOut } from 'lucide-react';
+import { 
+    LayoutDashboard, Truck, TrendingUp, Users, ShoppingCart, 
+    MessageSquare, Settings, LogOut, ChevronLeft, ChevronRight,
+    PieChart, Map, Activity, FileText, Shield, Database, 
+    ClipboardList, DollarSign, Briefcase
+} from 'lucide-react';
 
-/**
- * NavItem component represents a single clickable item in the sidebar.
- * It conditionally renders based on the user's role.
- * @param {object} props
- * @param {object} props.item - The navigation item object (id, icon, label, module, roles).
- * @param {string} props.activeView - The currently active view ID.
- * @param {function} props.setActiveView - Function to set the active view.
- * @param {boolean} props.isExpanded - Whether the sidebar is expanded or collapsed.
- */
-const NavItem = ({ item, activeView, setActiveView, isExpanded }) => {
-    const { user } = useAuth();
-
-    // Debug 12: Log the user object and item roles for each NavItem
-    console.log(`[NavItem Debug] Item: ${item.label}, User Role: ${user?.role}, Allowed Roles: ${item.roles ? item.roles.join(', ') : 'All'}`);
-
-    // Determine if the current user has permission to view this navigation item.
-    // If item.roles is not defined, it means the item is accessible to all authenticated users.
-    // FIX: Convert both user.role and item.roles to lowercase for case-insensitive comparison.
-    const canView = !item.roles || (user && item.roles.map(role => role.toLowerCase()).includes(user.role.toLowerCase()));
-
-    // Debug 13: Log the result of canView
-    console.log(`[NavItem Debug] Item: ${item.label}, Can View: ${canView}`);
-
-    if (!canView) {
-        return null; // Don't render the item if the user doesn't have the required role
+const MENU_GROUPS = [
+    {
+        title: "Command",
+        items: [
+            { id: 'Dashboard', label: 'Executive View', icon: LayoutDashboard },
+            { id: 'Logistics', label: 'Dispatch Map', icon: Truck },
+        ]
+    },
+    {
+        title: "Intelligence",
+        items: [
+            { id: 'BusinessAnalytics', label: 'Growth & LTV', icon: PieChart },
+            { id: 'DeliveryHeatmap', label: 'Geospatial', icon: Map },
+            { id: 'DriverScorecards', label: 'Fleet Perf.', icon: Activity },
+        ]
+    },
+    {
+        title: "Operations",
+        items: [
+            { id: 'Inventory', label: 'Stock & Cylinders', icon: ShoppingCart },
+            { id: 'PlantStatus', label: 'Plant & Maint.', icon: Database },
+        ]
+    },
+    {
+        title: "Finance & ERP",
+        items: [
+            { id: 'FinancialStatements', label: 'P&L / Balance', icon: TrendingUp },
+            { id: 'AssetAndLoan', label: 'Assets & Loans', icon: Briefcase },
+            { id: 'PlantProfitability', label: 'Unit Economics', icon: DollarSign },
+            { id: 'RevenueAssurance', label: 'Audit / Fraud', icon: Shield },
+            { id: 'TaxCompliance', label: 'Tax & VAT', icon: FileText },
+        ]
+    },
+    {
+        title: "Sales & CRM",
+        items: [
+            { id: 'CustomerHub', label: 'Customer DB', icon: Users },
+            { id: 'SalesAnalytics', label: 'Sales Trends', icon: TrendingUp },
+            { id: 'SupportDesk', label: 'Live Chat', icon: MessageSquare },
+        ]
+    },
+    {
+        title: "Point of Sale",
+        items: [
+            { id: 'DailyLog', label: 'Cashier POS', icon: ClipboardList },
+            { id: 'ApprovalQueue', label: 'EOD Approvals', icon: FileText },
+            { id: 'TransactionHistory', label: 'Ledger', icon: Database },
+        ]
+    },
+    {
+        title: "Administration",
+        items: [
+            { id: 'UserManagement', label: 'Staff Access', icon: Users },
+            { id: 'Configuration', label: 'System Config', icon: Settings },
+            { id: 'AuditLog', label: 'Security Logs', icon: Shield },
+            { id: 'AppLogViewer', label: 'System Diagnostics', icon: Activity },
+        ]
     }
+];
 
-    return (
-        <li className="px-4 py-1">
-            <button
-                onClick={() => setActiveView(item.id)}
-                className={`flex items-center p-2 text-sm rounded-lg transition-colors duration-200 w-full text-left 
-                    ${activeView === item.id ? 'bg-blue-500 text-white shadow-md' : 'text-gray-600 hover:bg-gray-200'}`
-                }
-            >
-                {/* Dynamically render the Lucide icon */}
-                <item.icon size={20} />
-                {/* Only show the label if the sidebar is expanded */}
-                {isExpanded && <span className="ml-4 font-medium">{item.label}</span>}
-            </button>
-        </li>
-    );
-};
-
-/**
- * Sidebar component for application navigation.
- * Manages its expanded/collapsed state and displays navigation items based on user roles.
- * @param {object} props
- * @param {string} props.activeView - The currently active view ID.
- * @param {function} props.setActiveView - Function to set the active view.
- */
 export default function Sidebar({ activeView, setActiveView }) {
-  const { user, logout } = useAuth(); // Get user and logout function from AuthContext
-  const [isExpanded, setIsExpanded] = useState(true); // State for sidebar expansion
-  
-  // Debug 14: Log the user object received by Sidebar
-  console.log('[Sidebar Debug] User object:', user);
-
-  // Get unique module names to group navigation items
-  const modules = [...new Set(NAV_ITEMS.map(item => item.module))];
-
-  /**
-   * Handles the logout action.
-   * Calls the logout function from the AuthContext, which clears the JWT and user state.
-   */
-  const handleLogout = () => {
-    logout();
-    // The App component (parent) will detect the change in user state (user becomes null)
-    // and automatically redirect to the Login page.
-  };
+    const { user, logout } = useAuth();
+    const [collapsed, setCollapsed] = useState(false);
 
     return (
-        <aside 
-            className={`flex flex-col h-screen bg-white shadow-lg transition-all duration-300 ease-in-out 
-                ${isExpanded ? 'w-64' : 'w-20'} flex-shrink-0` // flex-shrink-0 prevents it from shrinking too much
-            }
-        >
-            <div className="flex items-center justify-between p-4 border-b">
-                {isExpanded && <span className="text-xl font-bold text-gray-800">PrimeJet BMA</span>}
-                <button 
-                    onClick={() => setIsExpanded(!isExpanded)} 
-                    className="p-2 rounded-lg hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    aria-label={isExpanded ? "Collapse sidebar" : "Expand sidebar"}
-                >
-                    {/* Toggle icon based on expanded state */}
-                    {isExpanded ? <ChevronsLeft size={20} /> : <ChevronsRight size={20} />}
-                </button>
-            </div>
-            <nav className="flex-1 overflow-y-auto custom-scrollbar"> {/* Added custom-scrollbar for better UX */}
-                {modules.map(module => (
-                    <div key={module} className="mb-2"> {/* Added margin-bottom for spacing */}
-                        {isExpanded && (
-                            <h3 className="px-4 pt-4 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                                {module}
-                            </h3>
-                        )}
-                        <ul>
-                            {NAV_ITEMS
-                                .filter(item => item.module === module)
-                                .map(item => (
-                                    <NavItem 
-                                        key={item.id} 
-                                        item={item} 
-                                        activeView={activeView} 
-                                        setActiveView={setActiveView} 
-                                        isExpanded={isExpanded} 
-                                    />
-                                ))
-                            }
-                        </ul>
-                    </div>
-                ))}
-            </nav>
-            <div className="p-4 border-t">
-                {user && ( // Only show user info if a user is logged in
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center">
-                             {/* User's initial or avatar */}
-                             <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold text-lg">
-                                {user.email ? user.email[0].toUpperCase() : 'A'}
-                            </div>
-                            {isExpanded && (
-                                <div className="ml-3 overflow-hidden"> {/* Added overflow-hidden to truncate long emails */}
-                                    <p className="text-sm font-semibold text-gray-800">{user.role || 'User'}</p>
-                                    <p className="text-xs text-gray-500 truncate">{user.email || 'No email'}</p>
-                                </div>
-                            )}
+        <div className={`h-screen bg-[#0f172a]/95 backdrop-blur-xl border-r border-white/5 flex flex-col transition-all duration-300 z-50 ${collapsed ? 'w-20' : 'w-72'}`}>
+            {/* Header */}
+            <div className="p-6 flex items-center justify-between border-b border-white/5">
+                {!collapsed && (
+                    <div className="flex items-center">
+                        <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center mr-3 shadow-lg shadow-blue-500/30">
+                            <span className="font-bold text-white">P</span>
                         </div>
-                        {isExpanded && (
-                             <button 
-                                onClick={handleLogout} 
-                                className="p-2 rounded-lg text-gray-500 hover:bg-red-100 hover:text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500" 
-                                title="Logout"
-                                aria-label="Logout"
-                            >
-                                <LogOut size={20} />
-                            </button>
-                        )}
+                        <span className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-white">
+                            PrimeJet<span className="text-blue-500">OS</span>
+                        </span>
                     </div>
                 )}
+                <button onClick={() => setCollapsed(!collapsed)} className="text-gray-400 hover:text-white p-1 hover:bg-white/5 rounded-lg transition-all">
+                    {collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
+                </button>
             </div>
-        </aside>
+
+            {/* Menu */}
+            <div className="flex-1 overflow-y-auto py-4 px-3 space-y-6 custom-scrollbar">
+                {MENU_GROUPS.map((group, idx) => (
+                    <div key={idx}>
+                        {!collapsed && (
+                            <h3 className="px-4 text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">
+                                {group.title}
+                            </h3>
+                        )}
+                        <div className="space-y-1">
+                            {group.items.map(item => (
+                                <button
+                                    key={item.id}
+                                    onClick={() => setActiveView(item.id)}
+                                    className={`w-full flex items-center p-3 rounded-xl transition-all duration-200 group relative ${
+                                        activeView === item.id 
+                                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' 
+                                        : 'text-gray-400 hover:bg-white/5 hover:text-blue-300'
+                                    }`}
+                                >
+                                    <item.icon size={20} className={`${collapsed ? 'mx-auto' : 'mr-3'} ${activeView === item.id ? 'text-white' : 'text-gray-500 group-hover:text-blue-400'}`} />
+                                    
+                                    {!collapsed && <span className="font-medium text-sm">{item.label}</span>}
+                                    
+                                    {/* Tooltip for Collapsed Mode */}
+                                    {collapsed && (
+                                        <div className="absolute left-16 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 border border-white/10">
+                                            {item.label}
+                                        </div>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                ))}
+            </div>
+
+            {/* User Profile */}
+            <div className="p-4 border-t border-white/5 bg-black/20">
+                <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
+                    {!collapsed && (
+                        <div className="flex items-center">
+                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-blue-500 flex items-center justify-center text-xs font-bold text-white border border-white/20">
+                                {user?.name?.[0]}
+                            </div>
+                            <div className="ml-3 overflow-hidden">
+                                <p className="text-sm font-bold text-white truncate w-32">{user?.name}</p>
+                                <p className="text-xs text-gray-500 capitalize">{user?.role}</p>
+                            </div>
+                        </div>
+                    )}
+                    <button onClick={logout} className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
+                        <LogOut size={18} />
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 }

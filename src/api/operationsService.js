@@ -8,11 +8,11 @@ export const getUnassignedOrders = async (zoneId = null) => {
 };
 
 export const getOnlineDrivers = async () => {
-    // Uses the V1 user endpoint but filters for drivers + online status
+    // ✅ FIX: Ensure this hits /api/v1/users correctly
     const res = await apiClient.get('/users', { 
         params: { role: 'driver', isAvailableOnline: true } 
     });
-    return res.data || [];
+    return res.data || []; // Ensure it returns array
 };
 
 export const createRunFromBatch = async (orderIds) => {
@@ -25,9 +25,21 @@ export const getActiveRuns = async () => {
     return res.data;
 };
 
+// --- Operations ---
+export const assignDriver = async (runId, driverId) => {
+    const res = await apiClient.put(`/runs/${runId}/assign-driver`, { driverId });
+    return res.data;
+};
+
 // --- Plant Operations ---
 export const getPlants = async () => {
+    // ✅ FIX: Ensure this hits /api/v2/operations/plants (v2 route)
     const res = await apiClient.get('/api/v2/operations/plants');
+    return res.data;
+};
+
+export const addPlant = async (plantData) => {
+    const res = await apiClient.post('/api/v2/operations/plants', plantData);
     return res.data;
 };
 
