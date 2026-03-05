@@ -1,99 +1,250 @@
-import React, { useState, useEffect } from 'react';
-import { getPendingApprovals, approveSummary, rejectSummary } from '../../api/dataEntryService'; // Ensure rejectSummary is exported
-import { formatCurrency, formatDate } from '../../utils/formatters';
+// src/views/Finance/ApprovalQueue.js
+import React, { useEffect, useMemo, useState } from 'react';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
-import Notification from '../../components/shared/Notification';
-import { CheckCircle, XCircle, AlertTriangle } from 'lucide-react';
+import { getPendingApprovals, approveSummary, rejectSummary } from '../../api/dataEntryService';
+import { glPostApproved, glRetryFailed, glPostingExceptions } from '../../api/glService';
+import { RefreshCw, CheckCircle2, XCircle, BookOpen, AlertTriangle, Hammer } from 'lucide-react';
+
+const safeNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const fmt = (d) => {
+  const x = d ? new Date(d) : null;
+  if (!x || Number.isNaN(x.getTime())) return '—';
+  return x.toISOString().slice(0, 10);
+};
+
+const Badge = ({ text, tone = 'neutral' }) => {
+  const cls =
+    tone === 'good'
+      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-300'
+      : tone === 'warn'
+      ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+      : tone === 'bad'
+      ? 'bg-red-500/10 border-red-500/20 text-red-300'
+      : 'bg-white/5 border-white/10 text-gray-300';
+
+  return <span className={`text-[10px] px-2 py-1 rounded-lg border ${cls}`}>{text}</span>;
+};
 
 export default function ApprovalQueue() {
-    const [summaries, setSummaries] = useState([]);
-    const [loading, setLoading] = useState(true);
-    const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [info, setInfo] = useState('');
 
-    const fetchQueue = async () => {
-        setLoading(true);
-        try {
-            const data = await getPendingApprovals();
-            setSummaries(data || []);
-        } catch (e) {
-            setNotification({ show: true, message: 'Failed to load queue', type: 'error' });
-        } finally {
-            setLoading(false);
-        }
-    };
+  // optional filters (simple)
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
 
-    useEffect(() => { fetchQueue(); }, []);
+  const load = async () => {
+    setLoading(true);
+    setErr('');
+    setInfo('');
+    try {
+      const r = await getPendingApprovals();
+      setRows(Array.isArray(r) ? r : []);
+    } catch (e) {
+      setErr(e?.message || 'Failed to load approvals.');
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const handleAction = async (id, action) => {
-        const confirmMsg = action === 'approve' ? "Approve this report?" : "Reject this report?";
-        if (!window.confirm(confirmMsg)) return;
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-        try {
-            if (action === 'approve') await approveSummary(id);
-            else await rejectSummary(id); // Assume this function exists in service
-            
-            setNotification({ show: true, message: `Report ${action}d successfully`, type: 'success' });
-            fetchQueue();
-        } catch (e) {
-            setNotification({ show: true, message: 'Action failed', type: 'error' });
-        }
-    };
+  const doApprove = async (id) => {
+    setErr('');
+    setInfo('');
+    try {
+      await approveSummary(id);
+      setInfo('Approved.');
+      await load();
+    } catch (e) {
+      setErr(e?.message || 'Approve failed');
+    }
+  };
 
-    return (
-        <div className="space-y-6">
-            <Notification notification={notification} setNotification={setNotification} />
-            <PageTitle title="Approval Queue" subtitle="Pending End-of-Day Reports" />
+  const doReject = async (id) => {
+    setErr('');
+    setInfo('');
+    try {
+      await rejectSummary(id);
+      setInfo('Rejected.');
+      await load();
+    } catch (e) {
+      setErr(e?.message || 'Reject failed');
+    }
+  };
 
-            {loading ? <p className="text-center text-gray-500 animate-pulse">Checking for pending reports...</p> : (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                    {summaries.length === 0 ? (
-                        <div className="col-span-full text-center py-20 text-gray-500">
-                            <CheckCircle size={48} className="mx-auto mb-4 text-green-500/50"/>
-                            <p>All caught up! No pending approvals.</p>
-                        </div>
-                    ) : summaries.map(sum => (
-                        <div key={sum.id || sum._id} className="glass-card border-l-4 border-yellow-500 relative">
-                            <div className="flex justify-between items-start mb-4">
-                                <div>
-                                    <h3 className="font-bold text-white text-lg">{sum.branchName || 'Unknown Branch'}</h3>
-                                    <p className="text-xs text-gray-400">{formatDate(sum.date)} • {sum.cashierName}</p>
-                                </div>
-                                <span className="bg-yellow-500/20 text-yellow-500 px-2 py-1 rounded text-xs font-bold uppercase">Review</span>
-                            </div>
+  const doPostDay = async (date, branchId) => {
+    setErr('');
+    setInfo('');
+    try {
+      const r = await glPostApproved({ businessDate: date, branchIdOrZoneId: branchId });
+      setInfo(`Posted to GL: ${JSON.stringify(r?.posted || {})}`);
+      await load();
+    } catch (e) {
+      setErr(e?.message || 'Posting failed');
+    }
+  };
 
-                            <div className="space-y-3 mb-6 bg-black/20 p-4 rounded-xl">
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-gray-400">Total Revenue</span>
-                                    <span className="text-green-400 font-bold">{formatCurrency(sum.totalRevenue)}</span>
-                                </div>
-                                <div className="flex justify-between text-sm">
-                                    <span className="text-gray-400">Total Expenses</span>
-                                    <span className="text-red-400 font-bold">{formatCurrency(sum.totalExpenses)}</span>
-                                </div>
-                                <div className="border-t border-white/10 pt-2 flex justify-between text-sm">
-                                    <span className="text-white">Net Cash</span>
-                                    <span className="text-white font-bold">{formatCurrency(sum.netCash)}</span>
-                                </div>
-                            </div>
+  const doRetryRange = async () => {
+    setErr('');
+    setInfo('');
+    if (!startDate || !endDate) {
+      setErr('Select startDate and endDate to retry failed.');
+      return;
+    }
+    try {
+      const r = await glRetryFailed({ startDate, endDate });
+      setInfo(`Retry done: ${JSON.stringify(r?.failed || {})}`);
+    } catch (e) {
+      setErr(e?.message || 'Retry failed');
+    }
+  };
 
-                            {/* Discrepancy Alert */}
-                            {sum.reconciliation?.discrepancy !== 0 && (
-                                <div className="flex items-center text-xs text-red-400 mb-4 bg-red-500/10 p-2 rounded">
-                                    <AlertTriangle size={14} className="mr-2" />
-                                    Discrepancy: {formatCurrency(sum.reconciliation.discrepancy)}
-                                </div>
-                            )}
+  const doLoadExceptions = async () => {
+    setErr('');
+    setInfo('');
+    if (!startDate || !endDate) {
+      setErr('Select startDate and endDate to load exceptions.');
+      return;
+    }
+    try {
+      const ex = await glPostingExceptions({ startDate, endDate });
+      const failed = safeNum(ex?.totals?.failed);
+      setInfo(`Exceptions loaded. Failed: ${failed}`);
+    } catch (e) {
+      setErr(e?.message || 'Failed to load exceptions');
+    }
+  };
 
-                            <div className="flex gap-2">
-                                <Button onClick={() => handleAction(sum.id || sum._id, 'approve')} className="flex-1 bg-green-600 hover:bg-green-500 text-xs">Approve</Button>
-                                <Button onClick={() => handleAction(sum.id || sum._id, 'reject')} className="flex-1 bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-500/30 text-xs">Reject</Button>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            )}
+  const tableRows = useMemo(() => rows, [rows]);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex justify-between items-center">
+        <PageTitle title="Accounting Control Tower" subtitle="Approvals → Posting → Exceptions (GL-first)" />
+        <Button variant="secondary" icon={RefreshCw} onClick={load}>
+          Refresh
+        </Button>
+      </div>
+
+      {(err || info) && (
+        <Card className="bg-white/5 border border-white/10 p-4 rounded-xl">
+          {err ? <div className="text-xs text-red-300">{err}</div> : null}
+          {info ? <div className="text-xs text-emerald-300">{info}</div> : null}
+        </Card>
+      )}
+
+      <Card className="bg-white/5 border border-white/10 p-4 rounded-xl">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">Start</label>
+            <input
+              type="date"
+              className="w-full px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-gray-400 block mb-1">End</label>
+            <input
+              type="date"
+              className="w-full px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+          </div>
+          <div className="flex gap-2">
+            <Button icon={Hammer} variant="secondary" onClick={doRetryRange}>
+              Retry failed (range)
+            </Button>
+            <Button icon={AlertTriangle} variant="secondary" onClick={doLoadExceptions}>
+              Load exceptions
+            </Button>
+          </div>
         </div>
-    );
+      </Card>
+
+      <Card className="bg-white/5 border border-white/10 p-0 rounded-xl overflow-hidden">
+        {loading ? (
+          <div className="p-8 text-center text-blue-400 animate-pulse">Loading…</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="text-xs text-gray-400 border-b border-white/10 bg-black/20">
+                <tr>
+                  <th className="text-left py-3 px-4">Business Date</th>
+                  <th className="text-left py-3 px-4">Branch</th>
+                  <th className="text-right py-3 px-4">Revenue</th>
+                  <th className="text-left py-3 px-4">Approval</th>
+                  <th className="text-left py-3 px-4">Posting</th>
+                  <th className="text-right py-3 px-4">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {tableRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="py-6 px-4 text-gray-500">
+                      No items in queue.
+                    </td>
+                  </tr>
+                ) : (
+                  tableRows.map((s) => {
+                    const approval = String(s?.status || '').toLowerCase();
+                    const post = String(s?.posting?.status || 'UNPOSTED').toUpperCase();
+                    const rev = safeNum(s?.sales?.totalRevenue);
+
+                    return (
+                      <tr key={s._id}>
+                        <td className="py-3 px-4 text-gray-200">{fmt(s?.date)}</td>
+                        <td className="py-3 px-4 text-gray-300">{String(s?.branchId || '—')}</td>
+                        <td className="py-3 px-4 text-right text-gray-200">₦{rev.toLocaleString()}</td>
+                        <td className="py-3 px-4">
+                          <Badge
+                            text={approval.toUpperCase() || '—'}
+                            tone={approval === 'approved' ? 'good' : approval.includes('reject') ? 'bad' : 'warn'}
+                          />
+                        </td>
+                        <td className="py-3 px-4">
+                          <Badge
+                            text={post}
+                            tone={post === 'POSTED' ? 'good' : post === 'FAILED' ? 'bad' : 'warn'}
+                          />
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex gap-2 justify-end">
+                            <Button icon={CheckCircle2} onClick={() => doApprove(s._id)}>
+                              Approve
+                            </Button>
+                            <Button icon={XCircle} variant="secondary" onClick={() => doReject(s._id)}>
+                              Reject
+                            </Button>
+                            <Button
+                              icon={BookOpen}
+                              variant="secondary"
+                              onClick={() => doPostDay(fmt(s?.date), String(s?.branchId || ''))}
+                            >
+                              Post day
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
 }

@@ -1,151 +1,192 @@
-import React, { useState } from 'react';
-import { useAuth } from '../../hooks/useAuth';
-import { 
-    LayoutDashboard, Truck, TrendingUp, Users, ShoppingCart, 
-    MessageSquare, Settings, LogOut, ChevronLeft, ChevronRight,
-    PieChart, Map, Activity, FileText, Shield, Database, 
-    ClipboardList, DollarSign, Briefcase
+// File: src/components/layout/Sidebar.js
+
+import React, { useMemo } from 'react';
+import {
+  LayoutDashboard,
+  Truck,
+  Wallet,
+  FileText,
+  Scale,
+  Activity,
+  ShieldAlert,
+  Building2,
+  Package,
+  Factory,
+  Users,
+  BarChart3,
+  Map,
+  Headphones,
+  ClipboardCheck,
+  History,
+  Settings,
+  Shield,
+  ScrollText,
+  TerminalSquare,
+  ChevronRight,
 } from 'lucide-react';
 
-const MENU_GROUPS = [
-    {
-        title: "Command",
-        items: [
-            { id: 'Dashboard', label: 'Executive View', icon: LayoutDashboard },
-            { id: 'Logistics', label: 'Dispatch Map', icon: Truck },
-        ]
-    },
-    {
-        title: "Intelligence",
-        items: [
-            { id: 'BusinessAnalytics', label: 'Growth & LTV', icon: PieChart },
-            { id: 'DeliveryHeatmap', label: 'Geospatial', icon: Map },
-            { id: 'DriverScorecards', label: 'Fleet Perf.', icon: Activity },
-        ]
-    },
-    {
-        title: "Operations",
-        items: [
-            { id: 'Inventory', label: 'Stock & Cylinders', icon: ShoppingCart },
-            { id: 'PlantStatus', label: 'Plant & Maint.', icon: Database },
-        ]
-    },
-    {
-        title: "Finance & ERP",
-        items: [
-            { id: 'FinancialStatements', label: 'P&L / Balance', icon: TrendingUp },
-            { id: 'AssetAndLoan', label: 'Assets & Loans', icon: Briefcase },
-            { id: 'PlantProfitability', label: 'Unit Economics', icon: DollarSign },
-            { id: 'RevenueAssurance', label: 'Audit / Fraud', icon: Shield },
-            { id: 'TaxCompliance', label: 'Tax & VAT', icon: FileText },
-        ]
-    },
-    {
-        title: "Sales & CRM",
-        items: [
-            { id: 'CustomerHub', label: 'Customer DB', icon: Users },
-            { id: 'SalesAnalytics', label: 'Sales Trends', icon: TrendingUp },
-            { id: 'SupportDesk', label: 'Live Chat', icon: MessageSquare },
-        ]
-    },
-    {
-        title: "Point of Sale",
-        items: [
-            { id: 'DailyLog', label: 'Cashier POS', icon: ClipboardList },
-            { id: 'ApprovalQueue', label: 'EOD Approvals', icon: FileText },
-            { id: 'TransactionHistory', label: 'Ledger', icon: Database },
-        ]
-    },
-    {
-        title: "Administration",
-        items: [
-            { id: 'UserManagement', label: 'Staff Access', icon: Users },
-            { id: 'Configuration', label: 'System Config', icon: Settings },
-            { id: 'AuditLog', label: 'Security Logs', icon: Shield },
-            { id: 'AppLogViewer', label: 'System Diagnostics', icon: Activity },
-        ]
-    }
-];
+/**
+ * GL-FIRST SIDEBAR
+ *
+ * IMPORTANT:
+ * - We keep "DailyLog" viewId for backward compatibility.
+ * - UI label changes to "Close Workspace" (GL-first).
+ *
+ * New finance views:
+ * - TrialBalance
+ * - GLHealth
+ */
+
+const NavSection = ({ title, children }) => (
+  <div className="mb-5">
+    <div className="px-3 mb-2 text-[10px] uppercase tracking-widest text-slate-500 font-semibold">{title}</div>
+    <div className="space-y-1">{children}</div>
+  </div>
+);
+
+const NavItem = ({ icon: Icon, label, viewId, activeView, setActiveView, badge }) => {
+  const active = activeView === viewId;
+
+  return (
+    <button
+      onClick={() => setActiveView(viewId)}
+      className={[
+        'w-full flex items-center gap-3 px-3 py-2 rounded-xl border transition-all',
+        active
+          ? 'bg-blue-600/15 border-blue-500/30 text-white'
+          : 'bg-white/0 border-white/0 hover:bg-white/5 hover:border-white/10 text-slate-300',
+      ].join(' ')}
+    >
+      <div
+        className={[
+          'p-2 rounded-lg border',
+          active ? 'bg-blue-600/20 border-blue-500/30 text-blue-300' : 'bg-white/5 border-white/10 text-slate-300',
+        ].join(' ')}
+      >
+        <Icon size={18} />
+      </div>
+
+      <div className="flex-1 text-left">
+        <div className="text-sm font-semibold">{label}</div>
+      </div>
+
+      {badge ? (
+        <span className="text-[10px] px-2 py-1 rounded-full bg-white/5 border border-white/10 text-slate-300">
+          {badge}
+        </span>
+      ) : null}
+
+      <ChevronRight size={14} className={active ? 'text-blue-300' : 'text-slate-600'} />
+    </button>
+  );
+};
 
 export default function Sidebar({ activeView, setActiveView }) {
-    const { user, logout } = useAuth();
-    const [collapsed, setCollapsed] = useState(false);
+  const nav = useMemo(
+    () => [
+      {
+        title: 'Command Center',
+        items: [
+          { viewId: 'Dashboard', label: 'Command Center', icon: LayoutDashboard },
+          { viewId: 'Logistics', label: 'Logistics', icon: Truck },
+        ],
+      },
+      {
+        title: 'Finance',
+        items: [
+          { viewId: 'FinancialStatements', label: 'Management Accounts', icon: FileText, badge: 'GL' },
+          { viewId: 'TrialBalance', label: 'Trial Balance', icon: Scale, badge: 'GL' },
+          { viewId: 'GLHealth', label: 'GL Health', icon: Activity, badge: 'GL' },
+          { viewId: 'RevenueAssurance', label: 'Revenue Assurance', icon: ShieldAlert },
+          { viewId: 'TaxCompliance', label: 'Tax Compliance', icon: ScrollText },
+          { viewId: 'AssetAndLoan', label: 'Assets & Loans', icon: Building2 },
+          { viewId: 'PlantProfitability', label: 'Plant Profitability', icon: Wallet },
+        ],
+      },
+      {
+        title: 'Operations',
+        items: [
+          { viewId: 'Inventory', label: 'Inventory', icon: Package },
+          { viewId: 'PlantStatus', label: 'Plant Status', icon: Factory },
+        ],
+      },
+      {
+        title: 'Performance',
+        items: [{ viewId: 'DriverScorecards', label: 'Driver Scorecards', icon: Users }],
+      },
+      {
+        title: 'Intelligence',
+        items: [
+          { viewId: 'BusinessAnalytics', label: 'Business Analytics', icon: BarChart3 },
+          { viewId: 'DeliveryHeatmap', label: 'Delivery Heatmap', icon: Map },
+        ],
+      },
+      {
+        title: 'Sales & Support',
+        items: [
+          { viewId: 'SalesAnalytics', label: 'Sales Analytics', icon: BarChart3 },
+          { viewId: 'CustomerHub', label: 'Customer Hub', icon: Users },
+          { viewId: 'SupportDesk', label: 'Support Desk', icon: Headphones },
+        ],
+      },
+      {
+        title: 'Data Entry',
+        items: [
+          // ✅ GL-first rename, legacy viewId remains DailyLog
+          { viewId: 'DailyLog', label: 'Close Workspace', icon: ClipboardCheck, badge: 'GL' },
+          { viewId: 'ApprovalQueue', label: 'Approval Queue', icon: Shield },
+          { viewId: 'TransactionHistory', label: 'Transaction History', icon: History },
+        ],
+      },
+      {
+        title: 'Admin',
+        items: [
+          { viewId: 'UserManagement', label: 'User Management', icon: Users },
+          { viewId: 'Configuration', label: 'Configuration', icon: Settings },
+          { viewId: 'AuditLog', label: 'Audit Log', icon: ScrollText },
+          { viewId: 'AppLogViewer', label: 'App Logs', icon: TerminalSquare },
+        ],
+      },
+    ],
+    []
+  );
 
-    return (
-        <div className={`h-screen bg-[#0f172a]/95 backdrop-blur-xl border-r border-white/5 flex flex-col transition-all duration-300 z-50 ${collapsed ? 'w-20' : 'w-72'}`}>
-            {/* Header */}
-            <div className="p-6 flex items-center justify-between border-b border-white/5">
-                {!collapsed && (
-                    <div className="flex items-center">
-                        <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center mr-3 shadow-lg shadow-blue-500/30">
-                            <span className="font-bold text-white">P</span>
-                        </div>
-                        <span className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-white">
-                            PrimeJet<span className="text-blue-500">OS</span>
-                        </span>
-                    </div>
-                )}
-                <button onClick={() => setCollapsed(!collapsed)} className="text-gray-400 hover:text-white p-1 hover:bg-white/5 rounded-lg transition-all">
-                    {collapsed ? <ChevronRight size={20} /> : <ChevronLeft size={20} />}
-                </button>
-            </div>
+  return (
+    <aside className="w-[280px] shrink-0 border-r border-white/10 bg-[#0b1224] flex flex-col">
+      {/* Brand */}
+      <div className="px-4 py-4 border-b border-white/10">
+        <div className="text-white font-extrabold tracking-wide">PrimeJet HQ</div>
+        <div className="text-[11px] text-slate-500 mt-1">GL-first Ops & Finance Console</div>
+      </div>
 
-            {/* Menu */}
-            <div className="flex-1 overflow-y-auto py-4 px-3 space-y-6 custom-scrollbar">
-                {MENU_GROUPS.map((group, idx) => (
-                    <div key={idx}>
-                        {!collapsed && (
-                            <h3 className="px-4 text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2">
-                                {group.title}
-                            </h3>
-                        )}
-                        <div className="space-y-1">
-                            {group.items.map(item => (
-                                <button
-                                    key={item.id}
-                                    onClick={() => setActiveView(item.id)}
-                                    className={`w-full flex items-center p-3 rounded-xl transition-all duration-200 group relative ${
-                                        activeView === item.id 
-                                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20' 
-                                        : 'text-gray-400 hover:bg-white/5 hover:text-blue-300'
-                                    }`}
-                                >
-                                    <item.icon size={20} className={`${collapsed ? 'mx-auto' : 'mr-3'} ${activeView === item.id ? 'text-white' : 'text-gray-500 group-hover:text-blue-400'}`} />
-                                    
-                                    {!collapsed && <span className="font-medium text-sm">{item.label}</span>}
-                                    
-                                    {/* Tooltip for Collapsed Mode */}
-                                    {collapsed && (
-                                        <div className="absolute left-16 bg-gray-900 text-white text-xs px-2 py-1 rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap z-50 border border-white/10">
-                                            {item.label}
-                                        </div>
-                                    )}
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                ))}
-            </div>
+      {/* Nav */}
+      <div className="flex-1 overflow-auto px-2 py-4">
+        {nav.map((sec) => (
+          <NavSection key={sec.title} title={sec.title}>
+            {sec.items.map((it) => (
+              <NavItem
+                key={it.viewId}
+                icon={it.icon}
+                label={it.label}
+                viewId={it.viewId}
+                badge={it.badge}
+                activeView={activeView}
+                setActiveView={setActiveView}
+              />
+            ))}
+          </NavSection>
+        ))}
+      </div>
 
-            {/* User Profile */}
-            <div className="p-4 border-t border-white/5 bg-black/20">
-                <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
-                    {!collapsed && (
-                        <div className="flex items-center">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-purple-500 to-blue-500 flex items-center justify-center text-xs font-bold text-white border border-white/20">
-                                {user?.name?.[0]}
-                            </div>
-                            <div className="ml-3 overflow-hidden">
-                                <p className="text-sm font-bold text-white truncate w-32">{user?.name}</p>
-                                <p className="text-xs text-gray-500 capitalize">{user?.role}</p>
-                            </div>
-                        </div>
-                    )}
-                    <button onClick={logout} className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors">
-                        <LogOut size={18} />
-                    </button>
-                </div>
-            </div>
+      {/* Footer */}
+      <div className="px-4 py-3 border-t border-white/10 text-[10px] text-slate-600">
+        <div className="flex items-center justify-between">
+          <span>System Mode</span>
+          <span className="px-2 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-300">
+            GL-ONLY
+          </span>
         </div>
-    );
+      </div>
+    </aside>
+  );
 }

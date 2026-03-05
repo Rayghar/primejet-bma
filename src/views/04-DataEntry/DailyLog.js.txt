@@ -1,0 +1,742 @@
+// src/views/04-DataEntry/DailyLogs.js
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useAuth } from '../../hooks/useAuth';
+import { getPlants } from '../../api/operationsService';
+import {
+  createOrGetDailySummary,
+  updateSummaryMeters,
+  logSale,
+  logExpense,
+  getDailyEntries,
+  finalizeDailySummary,
+} from '../../api/dataEntryService';
+import { formatCurrency } from '../../utils/formatters';
+import { generateRawBtReceipt } from '../../utils/rawbt';
+
+import PageTitle from '../../components/shared/PageTitle';
+import Button from '../../components/shared/Button';
+import Notification from '../../components/shared/Notification';
+import ReceiptPreviewModal from '../../components/shared/ReceiptPreviewModal';
+import { FileText, Printer, RefreshCw, AlertTriangle } from 'lucide-react';
+
+const EXPENSE_CATEGORIES = ['Fuel', 'Maintenance', 'Salaries', 'Utilities', 'Miscellaneous'];
+
+const safeNum = (v, d = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : d;
+};
+
+const safeId = (obj) => obj?.id || obj?._id;
+
+const parseMoney = (v) => {
+  // handles "12,500" and empty strings safely
+  const s = String(v ?? '').replace(/,/g, '').trim();
+  if (!s) return NaN;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+};
+
+const clamp2 = (n) => Math.round(n * 100) / 100;
+
+export default function DailyLog() {
+  const { user } = useAuth();
+
+  const [dailySummary, setDailySummary] = useState(null);
+  const [plants, setPlants] = useState([]);
+  const [entries, setEntries] = useState([]);
+
+  const [loading, setLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const [selectedBranch, setSelectedBranch] = useState('');
+  const [previewedEntry, setPreviewedEntry] = useState(null);
+  const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
+
+  const [activeTab, setActiveTab] = useState('sale');
+  const [meters, setMeters] = useState({
+    openingMeterA: 0,
+    openingMeterB: 0,
+    closingMeterA: 0,
+    closingMeterB: 0,
+    pricePerKg: 1100,
+  });
+
+  const [saleForm, setSaleForm] = useState({
+    amount: '',
+    kgSold: '',
+    paymentMethod: 'Cash',
+    transactionType: 'POS',
+  });
+
+  const [expenseForm, setExpenseForm] = useState({
+    category: EXPENSE_CATEGORIES[0],
+    amount: '',
+    description: '',
+  });
+
+  // --- Initialization ---
+  useEffect(() => {
+    const init = async () => {
+      setLoading(true);
+      try {
+        const plantList = await getPlants();
+        const list = Array.isArray(plantList) ? plantList : [];
+        setPlants(list);
+        if (list.length > 0) setSelectedBranch(safeId(list[0]));
+      } catch (e) {
+        console.error('Init Error', e);
+        setNotification({ show: true, message: 'Failed to load branches', type: 'error' });
+      } finally {
+        setLoading(false);
+      }
+    };
+    init();
+  }, []);
+
+  const summaryId = dailySummary?._id || dailySummary?.dailySummaryId;
+
+  // --- Fetch Summary ---
+  const fetchDailySummary = useCallback(async () => {
+    if (!selectedBranch || !user) return;
+
+    try {
+      const summary = await createOrGetDailySummary({
+        branchId: selectedBranch,
+        cashierName: user.name || user.email || 'Unknown',
+        pricePerKg: safeNum(meters.pricePerKg, 1100),
+      });
+
+      setDailySummary(summary);
+
+      // hydrate meters from server (server wins)
+      setMeters({
+        openingMeterA: safeNum(summary?.openingMeters?.meterA, 0),
+        openingMeterB: safeNum(summary?.openingMeters?.meterB, 0),
+        closingMeterA: safeNum(summary?.closingMeters?.meterA, 0),
+        closingMeterB: safeNum(summary?.closingMeters?.meterB, 0),
+        pricePerKg: safeNum(summary?.pricePerKg, 1100),
+      });
+
+      const sid = summary?._id || summary?.dailySummaryId;
+      if (sid) {
+        const entryList = await getDailyEntries(sid);
+        setEntries(Array.isArray(entryList) ? entryList : entryList?.entries || []);
+      } else {
+        setEntries([]);
+      }
+    } catch (error) {
+      console.error('Fetch Daily Summary Error', error);
+      setNotification({ show: true, message: 'Failed to load daily log', type: 'error' });
+      setEntries([]);
+    }
+  }, [selectedBranch, user, meters.pricePerKg]);
+
+  useEffect(() => {
+    fetchDailySummary();
+  }, [fetchDailySummary]);
+
+  const isApproved = dailySummary?.status === 'approved';
+  const isFinalized = dailySummary?.status === 'submitted' || dailySummary?.status === 'approved';
+
+  const canEdit = !!dailySummary && !isApproved;
+  const canLog = !!dailySummary && !isFinalized; // after finalize/submitted, lock new entries
+  const canUpdateMeters = !!dailySummary && !isFinalized;
+
+  // --- Handlers ---
+  const handleUpdateMeters = async (e) => {
+    e.preventDefault();
+    if (!dailySummary || !canUpdateMeters) return;
+
+    // validate meters (avoid NaN and negative reconciliations due to empty input)
+    const oa = safeNum(meters.openingMeterA, 0);
+    const ob = safeNum(meters.openingMeterB, 0);
+    const ca = safeNum(meters.closingMeterA, 0);
+    const cb = safeNum(meters.closingMeterB, 0);
+    const ppk = safeNum(meters.pricePerKg, 1100);
+
+    if (ppk <= 0) {
+      setNotification({ show: true, message: 'Price/Kg must be greater than 0', type: 'error' });
+      return;
+    }
+    if (ca < oa || cb < ob) {
+      setNotification({
+        show: true,
+        message: 'Closing meters cannot be lower than opening meters.',
+        type: 'error',
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const updated = await updateSummaryMeters(summaryId, {
+        openingMeters: { meterA: oa, meterB: ob },
+        closingMeters: { meterA: ca, meterB: cb },
+        pricePerKg: ppk,
+      });
+
+      setDailySummary(updated);
+      setNotification({ show: true, message: 'Meters updated successfully', type: 'success' });
+
+      // refresh entries + recalcs from server (single source of truth)
+      fetchDailySummary();
+    } catch (e2) {
+      console.error('Update Meters Error', e2);
+      setNotification({
+        show: true,
+        message: e2?.response?.data?.message || 'Update failed',
+        type: 'error',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTransaction = async (e) => {
+    e.preventDefault();
+    if (!dailySummary || !canLog) return;
+
+    setIsSaving(true);
+    try {
+      if (activeTab === 'sale') {
+        const revenue = parseMoney(saleForm.amount);
+        const kgSold = parseMoney(saleForm.kgSold);
+
+        if (!Number.isFinite(revenue) || revenue <= 0 || !Number.isFinite(kgSold) || kgSold <= 0) {
+          setNotification({ show: true, message: 'Enter valid KG and Amount values.', type: 'error' });
+          return;
+        }
+
+        const res = await logSale({
+          dailySummaryId: summaryId,
+          branchId: selectedBranch,
+          revenue,
+          kgSold,
+          paymentMethod: saleForm.paymentMethod,
+          transactionType: saleForm.transactionType,
+        });
+
+        // Printing should NEVER block logging
+        try {
+          const tx = res?.transaction || res;
+          const receiptText = generateRawBtReceipt(tx, { name: 'PrimeJet', address: 'Lagos' });
+          // Prefer your createRawBtLink helper if you have it; keep btoa fallback safe
+          const encoded = btoa(unescape(encodeURIComponent(receiptText)));
+          window.location.href = `rawbt:${encoded}`;
+        } catch (printErr) {
+          console.warn('Receipt print failed (non-blocking):', printErr);
+        }
+
+        setSaleForm({ amount: '', kgSold: '', paymentMethod: 'Cash', transactionType: 'POS' });
+        setPreviewedEntry(res?.transaction || res);
+        setNotification({ show: true, message: 'Sale logged successfully', type: 'success' });
+      } else {
+        const amount = parseMoney(expenseForm.amount);
+        if (!expenseForm.description?.trim() || !Number.isFinite(amount) || amount <= 0) {
+          setNotification({ show: true, message: 'Enter valid expense description and amount.', type: 'error' });
+          return;
+        }
+
+        await logExpense({
+          dailySummaryId: summaryId,
+          branchId: selectedBranch,
+          amount,
+          category: expenseForm.category,
+          description: expenseForm.description.trim(),
+        });
+
+        setExpenseForm({ category: EXPENSE_CATEGORIES[0], amount: '', description: '' });
+        setNotification({ show: true, message: 'Expense logged', type: 'success' });
+      }
+
+      await fetchDailySummary();
+    } catch (e2) {
+      console.error('Transaction Error', e2);
+      setNotification({
+        show: true,
+        message: e2?.response?.data?.message || `Transaction failed: ${e2.message}`,
+        type: 'error',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleSaleCalc = (e) => {
+    const { name, value } = e.target;
+    const price = safeNum(meters.pricePerKg, 1100);
+
+    // allow blank typing without NaN explosion
+    if (value === '') {
+      setSaleForm((prev) => ({ ...prev, [name]: '' }));
+      return;
+    }
+
+    const num = parseMoney(value);
+    if (!Number.isFinite(num)) {
+      setSaleForm((prev) => ({ ...prev, [name]: value }));
+      return;
+    }
+
+    if (name === 'amount') {
+      const kg = price > 0 ? clamp2(num / price) : 0;
+      setSaleForm((prev) => ({ ...prev, amount: String(num), kgSold: kg ? kg.toFixed(2) : '' }));
+    } else if (name === 'kgSold') {
+      const amt = clamp2(num * price);
+      setSaleForm((prev) => ({ ...prev, kgSold: String(num), amount: amt ? amt.toFixed(2) : '' }));
+    } else {
+      setSaleForm((prev) => ({ ...prev, [name]: value }));
+    }
+  };
+
+  const handleFinalize = async () => {
+    if (!dailySummary || isFinalized) return;
+    if (!window.confirm("Finalize today's log? This will submit for approval and lock entries.")) return;
+
+    setIsSaving(true);
+    try {
+      await finalizeDailySummary(summaryId);
+      await fetchDailySummary();
+      setNotification({ show: true, message: 'Day finalized and submitted for approval!', type: 'success' });
+    } catch (e2) {
+      console.error('Finalize Error', e2);
+      setNotification({
+        show: true,
+        message: e2?.response?.data?.message || 'Finalization failed',
+        type: 'error',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const calculations = useMemo(() => {
+    const meterTotal =
+      (safeNum(meters.closingMeterA) - safeNum(meters.openingMeterA)) +
+      (safeNum(meters.closingMeterB) - safeNum(meters.openingMeterB));
+
+    const expected = safeNum(meterTotal) * safeNum(meters.pricePerKg, 1100);
+
+    // server totals might live at different keys depending on implementation
+    const actual =
+      safeNum(dailySummary?.sales?.totalRevenue, 0) ||
+      safeNum(dailySummary?.totals?.totalRevenue, 0) ||
+      0;
+
+    const diff = actual - expected;
+
+    return {
+      meterTotal: safeNum(meterTotal, 0),
+      expected: safeNum(expected, 0),
+      actual: safeNum(actual, 0),
+      diff: safeNum(diff, 0),
+    };
+  }, [meters, dailySummary]);
+
+  if (loading) return <div className="p-8 text-center text-blue-400 animate-pulse">Initializing Terminal...</div>;
+
+  return (
+    <div className="space-y-6">
+      <Notification notification={notification} setNotification={setNotification} />
+
+      <div className="flex justify-between items-center">
+        <PageTitle title="Daily POS Log" subtitle={`Session: ${new Date().toLocaleDateString()}`} />
+        <div className="flex items-center gap-3">
+          <select
+            value={selectedBranch}
+            onChange={(e) => setSelectedBranch(e.target.value)}
+            className="glass-input p-2 text-sm bg-black/20 w-52"
+            disabled={isSaving}
+          >
+            {plants.map((p) => (
+              <option key={safeId(p)} value={safeId(p)}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+
+          <button
+            onClick={fetchDailySummary}
+            className="glass-button px-3 py-2 flex items-center text-sm"
+            disabled={isSaving}
+            title="Refresh"
+          >
+            <RefreshCw size={16} className={`mr-2 ${isSaving ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+
+          <div className="text-right hidden sm:block">
+            <p className="text-xs text-gray-400">Cashier</p>
+            <p className="font-bold text-white text-sm">{user?.name || user?.email || '—'}</p>
+          </div>
+        </div>
+      </div>
+
+      {dailySummary && (
+        <div className="glass-card border-l-4 border-blue-500">
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="font-bold text-white">Meter Reconciliation</h3>
+
+            <div className="flex items-center gap-2">
+              {isFinalized && (
+                <span className="text-[10px] px-2 py-1 rounded bg-white/5 text-gray-300 border border-white/10">
+                  LOCKED
+                </span>
+              )}
+              <span
+                className={`text-xs px-2 py-1 rounded ${
+                  isApproved ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                }`}
+              >
+                {String(dailySummary.status || 'draft').toUpperCase()}
+              </span>
+            </div>
+          </div>
+
+          <form onSubmit={handleUpdateMeters}>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+              <div>
+                <label className="block text-gray-400 text-xs mb-1">Open A</label>
+                <input
+                  type="number"
+                  className="glass-input w-full p-2"
+                  value={meters.openingMeterA}
+                  onChange={(e) => setMeters({ ...meters, openingMeterA: safeNum(e.target.value, 0) })}
+                  disabled={!canUpdateMeters || isSaving}
+                  min={0}
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-400 text-xs mb-1">Close A</label>
+                <input
+                  type="number"
+                  className="glass-input w-full p-2"
+                  value={meters.closingMeterA}
+                  onChange={(e) => setMeters({ ...meters, closingMeterA: safeNum(e.target.value, 0) })}
+                  disabled={!canUpdateMeters || isSaving}
+                  min={0}
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-400 text-xs mb-1">Open B</label>
+                <input
+                  type="number"
+                  className="glass-input w-full p-2"
+                  value={meters.openingMeterB}
+                  onChange={(e) => setMeters({ ...meters, openingMeterB: safeNum(e.target.value, 0) })}
+                  disabled={!canUpdateMeters || isSaving}
+                  min={0}
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-400 text-xs mb-1">Close B</label>
+                <input
+                  type="number"
+                  className="glass-input w-full p-2"
+                  value={meters.closingMeterB}
+                  onChange={(e) => setMeters({ ...meters, closingMeterB: safeNum(e.target.value, 0) })}
+                  disabled={!canUpdateMeters || isSaving}
+                  min={0}
+                />
+              </div>
+
+              <div>
+                <label className="block text-gray-400 text-xs mb-1">Price/Kg</label>
+                <input
+                  type="number"
+                  className="glass-input w-full p-2 text-green-400 font-bold"
+                  value={meters.pricePerKg}
+                  onChange={(e) => setMeters({ ...meters, pricePerKg: safeNum(e.target.value, 1100) })}
+                  disabled={!canUpdateMeters || isSaving}
+                  min={1}
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 p-3 bg-white/5 rounded-lg flex flex-col md:flex-row justify-between items-center text-xs md:text-sm space-y-2 md:space-y-0">
+              <div>
+                <span className="text-gray-400">Total Metered:</span>{' '}
+                <span className="text-white font-bold">{calculations.meterTotal.toFixed(2)} kg</span>
+              </div>
+              <div>
+                <span className="text-gray-400">Expected:</span>{' '}
+                <span className="text-white font-bold">{formatCurrency(calculations.expected)}</span>
+              </div>
+              <div>
+                <span className="text-gray-400">Actual:</span>{' '}
+                <span className="text-green-400 font-bold">{formatCurrency(calculations.actual)}</span>
+              </div>
+
+              <div
+                className={`font-bold ${
+                  calculations.diff < -100 ? 'text-red-400' : calculations.diff > 100 ? 'text-yellow-300' : 'text-green-400'
+                }`}
+                title="Actual - Expected"
+              >
+                Diff: {formatCurrency(calculations.diff)}
+              </div>
+
+              <div className="flex gap-2">
+                <Button type="submit" size="sm" variant="secondary" disabled={isSaving || !canUpdateMeters}>
+                  Update
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleFinalize}
+                  disabled={isSaving || isFinalized}
+                >
+                  Finalize
+                </Button>
+              </div>
+            </div>
+
+            {!canUpdateMeters && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-gray-400">
+                <AlertTriangle size={14} className="text-yellow-400" />
+                Meters are locked after Finalize (submitted/approved).
+              </div>
+            )}
+          </form>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Entry Form */}
+        <div className="glass-card">
+          <div className="flex mb-4 gap-2">
+            <button
+              onClick={() => setActiveTab('sale')}
+              className={`flex-1 py-2 rounded text-sm transition-all ${
+                activeTab === 'sale'
+                  ? 'bg-green-600 text-white shadow-lg'
+                  : 'bg-white/5 text-gray-400 hover:text-white'
+              }`}
+            >
+              Log Sale
+            </button>
+            <button
+              onClick={() => setActiveTab('expense')}
+              className={`flex-1 py-2 rounded text-sm transition-all ${
+                activeTab === 'expense'
+                  ? 'bg-red-600 text-white shadow-lg'
+                  : 'bg-white/5 text-gray-400 hover:text-white'
+              }`}
+            >
+              Log Expense
+            </button>
+          </div>
+
+          {!canLog && (
+            <div className="mb-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs">
+              This day has been finalized (submitted/approved). New entries are locked.
+            </div>
+          )}
+
+          <form onSubmit={handleTransaction} className="space-y-4">
+            {activeTab === 'sale' ? (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">KG Sold</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="glass-input w-full p-3"
+                      value={saleForm.kgSold}
+                      onChange={handleSaleCalc}
+                      name="kgSold"
+                      placeholder="0.00"
+                      required
+                      disabled={!canLog || isSaving}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Amount (₦)</label>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="glass-input w-full p-3"
+                      value={saleForm.amount}
+                      onChange={handleSaleCalc}
+                      name="amount"
+                      placeholder="0.00"
+                      required
+                      disabled={!canLog || isSaving}
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Payment Method</label>
+                    <select
+                      className="glass-input w-full p-3 bg-slate-800"
+                      value={saleForm.paymentMethod}
+                      onChange={(e) => setSaleForm({ ...saleForm, paymentMethod: e.target.value })}
+                      disabled={!canLog || isSaving}
+                    >
+                      <option>Cash</option>
+                      <option>POS</option>
+                      <option>Transfer</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs text-gray-400 mb-1">Transaction Type</label>
+                    <select
+                      className="glass-input w-full p-3 bg-slate-800"
+                      value={saleForm.transactionType}
+                      onChange={(e) => setSaleForm({ ...saleForm, transactionType: e.target.value })}
+                      disabled={!canLog || isSaving}
+                    >
+                      <option value="POS">POS</option>
+                      <option value="Cash">Cash</option>
+                      <option value="Transfer">Transfer</option>
+                    </select>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Description</label>
+                  <input
+                    type="text"
+                    className="glass-input w-full p-3"
+                    value={expenseForm.description}
+                    onChange={(e) => setExpenseForm({ ...expenseForm, description: e.target.value })}
+                    required
+                    placeholder="Details"
+                    disabled={!canLog || isSaving}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Amount (₦)</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    className="glass-input w-full p-3"
+                    value={expenseForm.amount}
+                    onChange={(e) => setExpenseForm({ ...expenseForm, amount: e.target.value })}
+                    required
+                    placeholder="0.00"
+                    disabled={!canLog || isSaving}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Category</label>
+                  <select
+                    className="glass-input w-full p-3 bg-slate-800"
+                    value={expenseForm.category}
+                    onChange={(e) => setExpenseForm({ ...expenseForm, category: e.target.value })}
+                    disabled={!canLog || isSaving}
+                  >
+                    {EXPENSE_CATEGORIES.map((c) => (
+                      <option key={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+
+            <Button
+              type="submit"
+              className={`w-full ${activeTab === 'sale' ? 'bg-green-600 hover:bg-green-500' : 'bg-red-600 hover:bg-red-500'}`}
+              disabled={isSaving || !canLog}
+            >
+              {activeTab === 'sale' ? 'Log & Print Receipt' : 'Record Expense'}
+            </Button>
+
+            {isSaving && <p className="text-xs text-gray-500 text-center animate-pulse">Saving…</p>}
+          </form>
+        </div>
+
+        {/* Entries Table */}
+        <div className="lg:col-span-2 glass-card flex flex-col">
+          <h3 className="font-bold text-white mb-4 flex items-center">
+            <FileText className="mr-2 text-blue-400" /> Session Entries
+          </h3>
+
+          <div className="flex-1 overflow-y-auto max-h-[420px]">
+            <table className="w-full text-left text-sm">
+              <thead className="bg-white/5 text-gray-400 text-xs uppercase sticky top-0 backdrop-blur-md">
+                <tr>
+                  <th className="p-3">Time</th>
+                  <th className="p-3">Type</th>
+                  <th className="p-3">Details</th>
+                  <th className="p-3 text-right">Amount</th>
+                  <th className="p-3 text-center">Receipt</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-white/5">
+                {entries.length === 0 ? (
+                  <tr>
+                    <td className="p-6 text-center text-gray-500" colSpan={5}>
+                      No entries yet.
+                    </td>
+                  </tr>
+                ) : (
+                  entries.map((entry, i) => (
+                    <tr key={entry._id || entry.id || i} className="hover:bg-white/5">
+                      <td className="p-3 text-gray-400">
+                        {entry.createdAt ? new Date(entry.createdAt).toLocaleTimeString() : '--:--'}
+                      </td>
+
+                      <td className="p-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] uppercase font-bold ${
+                            entry.type === 'sale'
+                              ? 'bg-green-500/20 text-green-400'
+                              : 'bg-red-500/20 text-red-400'
+                          }`}
+                        >
+                          {entry.type}
+                        </span>
+                      </td>
+
+                      <td className="p-3 text-white">
+                        {entry.type === 'sale'
+                          ? `${safeNum(entry.kgSold).toFixed(2)}kg (${entry.paymentMethod || '—'})`
+                          : entry.description || '—'}
+                      </td>
+
+                      <td
+                        className={`p-3 text-right font-mono font-bold ${
+                          entry.type === 'sale' ? 'text-green-400' : 'text-red-400'
+                        }`}
+                      >
+                        {entry.type === 'expense' ? '-' : ''}
+                        {formatCurrency(safeNum(entry.amount, safeNum(entry.revenue, 0)))}
+                      </td>
+
+                      <td className="p-3 text-center">
+                        {entry.type === 'sale' && (
+                          <button
+                            onClick={() => setPreviewedEntry(entry)}
+                            className="text-gray-400 hover:text-white"
+                            title="Preview/Print"
+                          >
+                            <Printer size={16} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {previewedEntry && <ReceiptPreviewModal entry={previewedEntry} onClose={() => setPreviewedEntry(null)} />}
+    </div>
+  );
+}

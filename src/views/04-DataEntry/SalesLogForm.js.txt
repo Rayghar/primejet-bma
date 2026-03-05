@@ -1,0 +1,250 @@
+// src/views/04-DataEntry/SalesLogForm.js
+import React, { useEffect, useMemo, useState } from 'react';
+import { logSale } from '../../api/dataEntryService';
+import { generateRawBtReceipt, createRawBtLink } from '../../utils/rawbt';
+import Button from '../../components/shared/Button';
+import { Send, AlertTriangle } from 'lucide-react';
+
+const parseMoney = (v) => {
+  const s = String(v ?? '').replace(/,/g, '').trim();
+  if (!s) return NaN;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : NaN;
+};
+
+const safeId = (o) => o?.id || o?._id;
+
+export default function SalesLogForm({ user, plants = [], onSuccess, onError }) {
+  const defaultBranchId = useMemo(() => (plants.length ? safeId(plants[0]) : ''), [plants]);
+
+  const initialState = useMemo(
+    () => ({
+      kgSold: '',
+      revenue: '',
+      paymentMethod: 'Cash',
+      transactionType: 'POS',
+      branchId: defaultBranchId,
+      date: new Date().toISOString().split('T')[0],
+    }),
+    [defaultBranchId]
+  );
+
+  const [formData, setFormData] = useState(initialState);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [printWarn, setPrintWarn] = useState('');
+
+  useEffect(() => {
+    if (plants.length > 0 && !formData.branchId) {
+      setFormData((prev) => ({ ...prev, branchId: defaultBranchId }));
+    }
+  }, [plants, defaultBranchId, formData.branchId]);
+
+  useEffect(() => {
+    // only reset if still pristine to avoid clobber typing
+    const pristine = !formData.kgSold && !formData.revenue;
+    if (pristine) setFormData(initialState);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialState]);
+
+  const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
+
+  const canSubmit = useMemo(() => {
+    const kg = parseMoney(formData.kgSold);
+    const rev = parseMoney(formData.revenue);
+    return (
+      !!formData.date &&
+      !!formData.branchId &&
+      Number.isFinite(kg) &&
+      kg > 0 &&
+      Number.isFinite(rev) &&
+      rev > 0
+    );
+  }, [formData]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (isSubmitting) return;
+
+    if (!canSubmit) {
+      onError?.('Please fill in all required fields with valid values.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setPrintWarn('');
+    try {
+      const kgSold = parseMoney(formData.kgSold);
+      const revenue = parseMoney(formData.revenue);
+
+      // backend log (authoritative)
+      const res = await logSale({
+        ...formData,
+        kgSold,
+        revenue,
+        submittedBy: user?.email,
+      });
+
+      onSuccess?.('Sale logged successfully!');
+
+      // Receipt printing must be non-blocking
+      try {
+        const tx = res?.transaction || res;
+        const receiptData = {
+          ...tx,
+          ...formData,
+          kgSold,
+          revenue,
+          cashierEmail: user?.email,
+          receiptNumber: tx?.receiptNumber || `SALE-${Date.now()}`,
+        };
+
+        const companyInfo = {
+          name: 'PrimeJet Gas LLC',
+          address: 'Lagos, Nigeria',
+          phone: '',
+          website: '',
+        };
+
+        const receiptText = generateRawBtReceipt(receiptData, companyInfo);
+        const rawBtLink = createRawBtLink ? createRawBtLink(receiptText) : `rawbt:${btoa(unescape(encodeURIComponent(receiptText)))}`;
+
+        // Use window.location for URI scheme reliability in browsers
+        window.location.href = rawBtLink;
+      } catch (printErr) {
+        console.warn('Receipt printing failed:', printErr);
+        setPrintWarn('Sale saved, but receipt could not be printed. Please check RawBT installation/config.');
+      }
+
+      setFormData(initialState);
+    } catch (error) {
+      console.error('Sales Log Error:', error);
+      onError?.(error.response?.data?.message || 'Failed to submit sales log. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {printWarn && (
+        <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 text-xs flex items-start gap-2">
+          <AlertTriangle size={14} className="mt-0.5" />
+          <span>{printWarn}</span>
+        </div>
+      )}
+
+      <div>
+        <label htmlFor="sale-date" className="block text-sm font-medium text-gray-700">
+          Date
+        </label>
+        <input
+          type="date"
+          id="sale-date"
+          name="date"
+          value={formData.date}
+          onChange={handleChange}
+          className="mt-1 w-full p-2 border rounded-md"
+          required
+        />
+      </div>
+
+      <div>
+        <label htmlFor="sale-branch" className="block text-sm font-medium text-gray-700">
+          Branch
+        </label>
+        <select
+          id="sale-branch"
+          name="branchId"
+          value={formData.branchId}
+          onChange={handleChange}
+          className="mt-1 w-full p-2 border rounded-md bg-white"
+          required
+        >
+          {plants.length > 0 ? (
+            plants.map((b) => (
+              <option key={safeId(b)} value={safeId(b)}>
+                {b.name}
+              </option>
+            ))
+          ) : (
+            <option value="">Loading branches...</option>
+          )}
+        </select>
+      </div>
+
+      <div>
+        <label htmlFor="sale-kg-sold" className="block text-sm font-medium">
+          KG Sold
+        </label>
+        <input
+          type="text"
+          inputMode="decimal"
+          id="sale-kg-sold"
+          name="kgSold"
+          value={formData.kgSold}
+          onChange={handleChange}
+          className="mt-1 w-full p-2 border rounded-md"
+          required
+        />
+      </div>
+
+      <div>
+        <label htmlFor="sale-revenue" className="block text-sm font-medium">
+          Total Revenue (₦)
+        </label>
+        <input
+          type="text"
+          inputMode="decimal"
+          id="sale-revenue"
+          name="revenue"
+          value={formData.revenue}
+          onChange={handleChange}
+          className="mt-1 w-full p-2 border rounded-md"
+          required
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label htmlFor="sale-payment-method" className="block text-sm font-medium">
+            Payment Method
+          </label>
+          <select
+            id="sale-payment-method"
+            name="paymentMethod"
+            value={formData.paymentMethod}
+            onChange={handleChange}
+            className="mt-1 w-full p-2 border rounded-md bg-white"
+          >
+            <option>Cash</option>
+            <option>POS</option>
+            <option>Transfer</option>
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="sale-tx-type" className="block text-sm font-medium">
+            Transaction Type
+          </label>
+          <select
+            id="sale-tx-type"
+            name="transactionType"
+            value={formData.transactionType}
+            onChange={handleChange}
+            className="mt-1 w-full p-2 border rounded-md bg-white"
+          >
+            <option value="POS">POS</option>
+            <option value="Cash">Cash</option>
+            <option value="Transfer">Transfer</option>
+          </select>
+        </div>
+      </div>
+
+      <div className="flex justify-end pt-2">
+        <Button type="submit" disabled={!canSubmit || isSubmitting} icon={Send}>
+          {isSubmitting ? 'Submitting...' : 'Log & Print Receipt'}
+        </Button>
+      </div>
+    </form>
+  );
+}

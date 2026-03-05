@@ -1,12 +1,17 @@
-// src/api/customerService.js
+// src/api/supportService.js
 import apiClient from './apiClient';
 
 /**
- * ✅ Enhancements:
+ * ✅ Support Service
+ * Single façade for Support Desk:
+ * - Chat threads/history/send
+ * - Customers + customer orders
+ * - Support hub snapshot (unassigned + active runs + customers)
+ *
+ * Enhancements:
  * - consistent res.data returns
  * - normalized errors
- * - optional options param (supports AbortController signal, headers, etc.)
- * - safe param merging so caller params aren't overwritten
+ * - optional options param (AbortController signal, headers, etc.)
  */
 
 const normalizeApiError = (err, fallback = 'Request failed') => {
@@ -17,6 +22,7 @@ const normalizeApiError = (err, fallback = 'Request failed') => {
     err?.response?.data?.msg;
 
   const msg = serverMsg || err?.message || fallback;
+
   return { message: msg, status, raw: err };
 };
 
@@ -28,41 +34,16 @@ const throwNormalized = (err, fallback) => {
   throw e;
 };
 
-const mergeConfig = (options = {}, extra = {}) => ({
-  ...options,
-  ...extra,
-  params: {
-    ...(options?.params || {}),
-    ...(extra?.params || {}),
-  },
-});
-
+// -----------------------------
+// Customers
+// -----------------------------
 export const getCustomers = async (search = '', page = 1, options = {}) => {
   try {
     const params = { page, limit: 20, search };
-    const res = await apiClient.get('/api/v2/customers', mergeConfig(options, { params }));
+    const res = await apiClient.get('/api/v2/customers', { ...options, params });
     return res.data;
   } catch (err) {
     throwNormalized(err, 'Failed to load customers');
-  }
-};
-
-export const addCustomer = async (customerData, options = {}) => {
-  try {
-    const res = await apiClient.post('/api/v2/customers', customerData, options);
-    return res.data;
-  } catch (err) {
-    throwNormalized(err, 'Failed to add customer');
-  }
-};
-
-export const getCustomerDetails = async (customerId, options = {}) => {
-  try {
-    if (!customerId) throw new Error('customerId is required');
-    const res = await apiClient.get(`/api/v2/customers/${customerId}`, options);
-    return res.data;
-  } catch (err) {
-    throwNormalized(err, 'Failed to load customer details');
   }
 };
 
@@ -76,39 +57,15 @@ export const getCustomerOrders = async (customerId, options = {}) => {
   }
 };
 
-export const addCustomerNote = async (customerId, text, authorEmail, options = {}) => {
-  try {
-    if (!customerId) throw new Error('customerId is required');
-    if (!text?.trim()) throw new Error('note text is required');
-
-    const res = await apiClient.post(
-      `/api/v2/customers/${customerId}/notes`,
-      { text: text.trim(), authorEmail },
-      options
-    );
-    return res.data;
-  } catch (err) {
-    throwNormalized(err, 'Failed to add note');
-  }
-};
-
-export const getCustomerNotes = async (customerId, options = {}) => {
-  try {
-    if (!customerId) throw new Error('customerId is required');
-    const res = await apiClient.get(`/api/v2/customers/${customerId}/notes`, options);
-    return res.data;
-  } catch (err) {
-    throwNormalized(err, 'Failed to load notes');
-  }
-};
-
-// Chat Support (v1 endpoints kept intact)
+// -----------------------------
+// Chat (v1 endpoints kept intact)
+// -----------------------------
 export const getActiveChatThreads = async (options = {}) => {
   try {
-    const res = await apiClient.get(
-      '/api/v1/chat/threads',
-      mergeConfig(options, { params: { role: 'admin' } })
-    );
+    const res = await apiClient.get('/api/v1/chat/threads', {
+      ...options,
+      params: { role: 'admin', ...(options?.params || {}) },
+    });
     return res.data;
   } catch (err) {
     throwNormalized(err, 'Failed to load chat threads');
@@ -138,5 +95,42 @@ export const sendMessage = async (chatId, text, recipientId, options = {}) => {
     return res.data;
   } catch (err) {
     throwNormalized(err, 'Failed to send message');
+  }
+};
+
+// -----------------------------
+// Hub snapshot (best-effort)
+// -----------------------------
+const safeArr = (v) => (Array.isArray(v) ? v : []);
+const safeOrdersArray = (resData) => safeArr(resData?.orders || resData?.data || resData);
+
+export const getSupportHub = async (options = {}) => {
+  try {
+    // These are used elsewhere in your app (runs endpoints).
+    // If your backend mounts differently, adjust ONLY these paths.
+    const [unassigned, activeRuns, customers] = await Promise.allSettled([
+      apiClient.get('/runs/admin/unassigned-orders', options),
+      apiClient.get('/runs/admin/active', options),
+      apiClient.get('/api/v2/customers', { ...options, params: { page: 1, limit: 20, search: '' } }),
+    ]);
+
+    const unassignedOrders =
+      unassigned.status === 'fulfilled' ? safeOrdersArray(unassigned.value?.data) : [];
+    const activeRunsRaw =
+      activeRuns.status === 'fulfilled' ? safeArr(activeRuns.value?.data) : [];
+    const customersPayload =
+      customers.status === 'fulfilled' ? customers.value?.data : null;
+
+    return {
+      unassignedOrders,
+      activeRuns: activeRunsRaw,
+      customers: customersPayload,
+      partial:
+        unassigned.status === 'rejected' ||
+        activeRuns.status === 'rejected' ||
+        customers.status === 'rejected',
+    };
+  } catch (err) {
+    throwNormalized(err, 'Failed to load support hub');
   }
 };
