@@ -1,18 +1,27 @@
 // src/views/Finance/CloseWorkspace.js
 import React, { useEffect, useMemo, useState } from 'react';
 import { getPlants } from '../../api/operationsService';
+import { useAuth } from '../../hooks/useAuth';
 import {
   createOrGetDailySummary,
   getDailyEntries,
   finalizeDailySummary,
   approveSummary,
   rejectSummary,
+  reopenSummary,
+  getOpenDailySummaries,
+  voidSaleEntry,
+  voidExpenseEntry,
 } from '../../api/dataEntryService';
-import { glPostApproved, glRetryFailed, glTrialBalance, glPostingExceptions } from '../../api/glService';
+import { glPostApproved, glRetryFailed, glTrialBalance, glPostingExceptions, glListPostingBatches } from '../../api/glService';
 
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
+import HelpPanel from '../../components/shared/HelpPanel';
+import { HelpLabel } from '../../components/shared/HelpTooltip';
+import { POS_CLOSE_WORKSPACE_HELP } from '../../utils/helpCatalog';
+import { normalizeBranchOptions, filterBranchesForUser, chooseDefaultBranch, getBranchValue, getBranchLabel, branchAccessMessage, isUserBranchRestricted } from '../../utils/branchAccess';
 
 import {
   CheckCircle2,
@@ -27,6 +36,25 @@ import {
 } from 'lucide-react';
 
 const safeNum = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const lineAmount = (x) => safeNum(x?.amount ?? x?.totalRevenue ?? x?.revenue);
+const lineQty = (x) => safeNum(x?.quantity ?? x?.kgSold);
+const lineUnitPrice = (x) => safeNum(x?.unitPrice ?? x?.pricePerKg);
+const expenseDebitAccount = (category) => {
+  const c = String(category || '').toUpperCase();
+  if (c.includes('STAFF') || c.includes('SALAR')) return { acct: '6000', label: 'Staff Costs' };
+  if (c.includes('LOGISTICS') || c.includes('FUEL')) return { acct: '6100', label: 'Logistics & Fuel' };
+  if (c.includes('UTIL')) return { acct: '6200', label: 'Utilities' };
+  if (c.includes('MAINT')) return { acct: '6300', label: 'Maintenance' };
+  if (c.includes('MARKET')) return { acct: '6400', label: 'Marketing' };
+  return { acct: '6500', label: 'Admin & General Expenses' };
+};
+const paymentCreditAccount = (method) => {
+  const p = String(method || 'CASH').toUpperCase();
+  if (p.includes('TRANSFER') || p.includes('BANK')) return { acct: '1010', label: 'Bank - Transfers' };
+  if (p.includes('POS') || p.includes('CARD')) return { acct: '1020', label: 'Bank - POS Settlements' };
+  if (p.includes('UNPAID') || p.includes('PAYABLE') || p === 'AP') return { acct: '2000', label: 'Accounts Payable' };
+  return { acct: '1000', label: 'Cash on Hand' };
+};
 const hasVal = (v) => v !== undefined && v !== null && String(v).trim() !== '';
 const fmtDate = (d) => {
   const x = d ? new Date(d) : null;
@@ -64,6 +92,7 @@ const TabButton = ({ active, onClick, children }) => (
 );
 
 export default function CloseWorkspace() {
+  const { user } = useAuth();
   const [tab, setTab] = useState('summary');
 
   // Required selectors
@@ -76,12 +105,19 @@ export default function CloseWorkspace() {
   // DailySummary + linked entries
   const [summary, setSummary] = useState(null);
   const [entries, setEntries] = useState({ sales: [], expenses: [] });
+  const [openDays, setOpenDays] = useState([]);
 
   // UI states
   const [loading, setLoading] = useState(false);
   const [busyAction, setBusyAction] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [infoMsg, setInfoMsg] = useState('');
+  const [showRejectBox, setShowRejectBox] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const [showReopenBox, setShowReopenBox] = useState(false);
+  const [reopenReason, setReopenReason] = useState('');
+  const [batches, setBatches] = useState([]);
+  const [checklist, setChecklist] = useState({ meterReadingsConfirmed: false, salesReviewed: false, expensesReviewed: false, reconciliationReviewed: false, varianceAcknowledged: false, varianceReason: '' });
 
   // GL/Audit states (same business date range)
   const [tb, setTb] = useState(null);
@@ -89,8 +125,8 @@ export default function CloseWorkspace() {
 
   const branchLabel = useMemo(() => {
     if (!branchId) return '—';
-    const b = branches.find((x) => String(x.id) === String(branchId));
-    return b?.name || branchId;
+    const b = branches.find((x) => String(getBranchValue(x)) === String(branchId));
+    return b ? getBranchLabel(b) : branchId;
   }, [branchId, branches]);
 
   const approvalStatus = useMemo(() => {
@@ -115,6 +151,21 @@ export default function CloseWorkspace() {
   const salesLines = useMemo(() => (Array.isArray(entries?.sales) ? entries.sales : []), [entries]);
   const expenseLines = useMemo(() => (Array.isArray(entries?.expenses) ? entries.expenses : []), [entries]);
 
+  const canVoidLines = String(summary?.status || '').toLowerCase() === 'in_progress' && String(summary?.posting?.status || '').toUpperCase() !== 'POSTED';
+  const handleVoidSale = async (sale) => {
+    const reason = window.prompt('Reason for voiding this sale?');
+    if (!reason) return;
+    await voidSaleEntry({ summaryId: summary?._id || summary?.dailySummaryId, saleId: sale?._id || sale?.id, reason });
+    await loadOrCreateSummary();
+  };
+  const handleVoidExpense = async (expense) => {
+    const reason = window.prompt('Reason for voiding this expense?');
+    if (!reason) return;
+    await voidExpenseEntry({ summaryId: summary?._id || summary?.dailySummaryId, expenseId: expense?._id || expense?.id, reason });
+    await loadOrCreateSummary();
+  };
+
+
   const salesTotal = useMemo(() => safeNum(summary?.sales?.totalRevenue), [summary]);
   const salesKg = useMemo(() => safeNum(summary?.sales?.totalKgSold), [summary]);
 
@@ -125,18 +176,55 @@ export default function CloseWorkspace() {
 
   const canSubmit = useMemo(() => hasVal(businessDate) && hasVal(branchId), [businessDate, branchId]);
 
+  const isInProgress = approvalStatus === 'IN_PROGRESS';
+  const isPendingApproval = approvalStatus === 'PENDING_APPROVAL';
+  const isApproved = approvalStatus === 'APPROVED';
+  const isRejected = approvalStatus === 'REJECTED';
+  const isPosted = postingStatus === 'POSTED';
+  const canFinalize = canSubmit && Boolean(summary?._id) && isInProgress;
+  const canApprove = Boolean(summary?._id) && isPendingApproval;
+  const canReject = Boolean(summary?._id) && isPendingApproval;
+  const canPostGL = canSubmit && Boolean(summary?._id) && isApproved && !isPosted;
+  const canRetry = canSubmit && Boolean(summary?._id) && postingStatus === 'FAILED';
+  const canReopen = Boolean(summary?._id) && ['REJECTED', 'APPROVED', 'PENDING_APPROVAL'].includes(approvalStatus) && postingStatus !== 'POSTED';
+
   const loadBranches = async () => {
     try {
       const plants = await getPlants();
-      const normalized = Array.isArray(plants)
-        ? plants
-            .map((p) => ({ id: p?.id || p?._id, name: p?.name || 'Unnamed Branch' }))
-            .filter((x) => x.id)
-        : [];
-      setBranches(normalized);
+      const normalized = normalizeBranchOptions(plants);
+      const scoped = filterBranchesForUser(normalized, user);
+      setBranches(scoped);
+
+      const defaultBranch = chooseDefaultBranch(normalized, user);
+      setBranchId((current) => {
+        const stillAllowed = scoped.some((branch) => getBranchValue(branch) === current);
+        return stillAllowed ? current : (defaultBranch ? getBranchValue(defaultBranch) : '');
+      });
+
+      const accessWarning = branchAccessMessage(normalized, user);
+      if (accessWarning) setErrorMsg(accessWarning);
     } catch (e) {
       console.error(e);
       setBranches([]);
+      setBranchId('');
+      setErrorMsg(e?.message || 'Failed to load Operations branches/plants.');
+    }
+  };
+
+
+  const loadOpenDays = async () => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      const restricted = isUserBranchRestricted(user);
+      if (restricted && !branchId) {
+        setOpenDays([]);
+        return;
+      }
+      const items = await getOpenDailySummaries({ endDate: today, branchIdOrZoneId: branchId, limit: 25 });
+      setOpenDays(Array.isArray(items) ? items : []);
+    } catch (e) {
+      console.error(e);
+      setOpenDays([]);
     }
   };
 
@@ -198,6 +286,7 @@ export default function CloseWorkspace() {
 
       setTb(tbRes.status === 'fulfilled' ? tbRes.value : null);
       setExceptions(exRes.status === 'fulfilled' ? exRes.value : null);
+      try { const br = await glListPostingBatches({ startDate, endDate, branchIdOrZoneId: branchId, limit: 10 }); setBatches(Array.isArray(br?.items) ? br.items : []); } catch (_) { setBatches([]); }
     } catch (e) {
       // silent
     }
@@ -206,7 +295,12 @@ export default function CloseWorkspace() {
   useEffect(() => {
     loadBranches();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user]);
+
+  useEffect(() => {
+    loadOpenDays();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [branchId]);
 
   useEffect(() => {
     loadOrCreateSummary();
@@ -230,10 +324,14 @@ export default function CloseWorkspace() {
       setErrorMsg('Daily summary not loaded.');
       return;
     }
+    if (!isInProgress) {
+      setErrorMsg('This day cannot be submitted again. Submit is only allowed while the day is IN_PROGRESS.');
+      return;
+    }
 
     setBusyAction('submit');
     try {
-      const r = await finalizeDailySummary(summary._id);
+      const r = await finalizeDailySummary(summary._id, checklist);
       setSummary(r || summary);
       setInfoMsg('Submitted for approval.');
     } catch (e) {
@@ -247,10 +345,14 @@ export default function CloseWorkspace() {
     setErrorMsg('');
     setInfoMsg('');
     if (!summary?._id) return;
+    if (!isPendingApproval) {
+      setErrorMsg('Only summaries with PENDING_APPROVAL status can be approved.');
+      return;
+    }
 
     setBusyAction('approve');
     try {
-      const r = await approveSummary(summary._id);
+      const r = await approveSummary(summary._id, { comment: window.prompt('Optional approval comment:') || null });
       setSummary(r || summary);
       setInfoMsg('Approved.');
     } catch (e) {
@@ -260,16 +362,41 @@ export default function CloseWorkspace() {
     }
   };
 
+  const openRejectBox = () => {
+    setErrorMsg('');
+    setInfoMsg('');
+    setShowRejectBox(true);
+  };
+
+  const cancelReject = () => {
+    if (busyAction) return;
+    setShowRejectBox(false);
+    setRejectReason('');
+  };
+
   const doReject = async () => {
     setErrorMsg('');
     setInfoMsg('');
     if (!summary?._id) return;
+    if (!isPendingApproval) {
+      setErrorMsg('Only summaries with PENDING_APPROVAL status can be rejected.');
+      return;
+    }
+
+    const reason = String(rejectReason || '').trim();
+    if (!reason) {
+      setErrorMsg('Rejection reason is required before rejecting a daily summary.');
+      setShowRejectBox(true);
+      return;
+    }
 
     setBusyAction('reject');
     try {
-      const r = await rejectSummary(summary._id);
+      const r = await rejectSummary(summary._id, { reason });
       setSummary(r || summary);
-      setInfoMsg('Rejected.');
+      setInfoMsg('Rejected with reason recorded.');
+      setShowRejectBox(false);
+      setRejectReason('');
     } catch (e) {
       setErrorMsg(e?.message || 'Failed to reject.');
     } finally {
@@ -282,6 +409,14 @@ export default function CloseWorkspace() {
     setInfoMsg('');
     if (!canSubmit) {
       setErrorMsg('Business Date and Branch are required.');
+      return;
+    }
+    if (!isApproved) {
+      setErrorMsg('Only APPROVED summaries can be posted to GL.');
+      return;
+    }
+    if (isPosted) {
+      setInfoMsg('This summary has already been posted to GL. Reposting is skipped to prevent duplicates.');
       return;
     }
 
@@ -319,14 +454,29 @@ export default function CloseWorkspace() {
     }
   };
 
-  // Posting preview (exact journal lines approximation)
-  // NOTE: backend is source of truth. This preview matches your policy matrix assumptions.
+  const openReopenBox = () => { setErrorMsg(''); setInfoMsg(''); setShowReopenBox(true); };
+
+  const doReopenSummary = async () => {
+    setErrorMsg(''); setInfoMsg('');
+    const reason = String(reopenReason || '').trim();
+    if (!summary?._id) return;
+    if (!reason) { setErrorMsg('Reopen/correction reason is required.'); return; }
+    setBusyAction('reopen');
+    try {
+      const r = await reopenSummary(summary._id, { reason });
+      setSummary(r || summary);
+      setShowReopenBox(false);
+      setReopenReason('');
+      setInfoMsg('Daily summary reopened for correction. Edit the day, complete checklist, and resubmit for approval.');
+    } catch (e) {
+      setErrorMsg(e?.message || 'Failed to reopen daily summary.');
+    } finally { setBusyAction(''); }
+  };
+
+// Posting preview (journal lines approximation; backend remains the source of truth)
   const postingPreview = useMemo(() => {
     const lines = [];
 
-    // POS aggregated from DailySummary totals (this is what your migrated data supports)
-    // Dr Cash/Bank, Cr Revenue POS
-    // Cash split if present
     const cash = safeNum(summary?.sales?.cashAmount);
     const transfer = safeNum(summary?.sales?.transferAmount);
     const pos = safeNum(summary?.sales?.posAmount);
@@ -334,9 +484,6 @@ export default function CloseWorkspace() {
 
     if (total > 0) {
       const drLines = [];
-      const credited = [];
-
-      // If split exists, use it. If not, treat all as cash.
       const splitSum = cash + transfer + pos;
       if (splitSum > 0) {
         if (cash > 0) drLines.push({ acct: '1000', label: 'Cash on Hand', dr: cash, cr: 0 });
@@ -346,29 +493,41 @@ export default function CloseWorkspace() {
         drLines.push({ acct: '1000', label: 'Cash on Hand', dr: total, cr: 0 });
       }
 
-      credited.push({ acct: '4000', label: 'Sales Revenue - POS (LPG)', dr: 0, cr: total });
-
       lines.push({
-        title: 'POS Daily Summary (aggregated)',
-        note: 'Based on DailySummary.sales totals (migration-safe)',
-        lines: [...drLines, ...credited],
+        title: 'POS Daily Summary Sales (aggregated)',
+        note: 'This is the GL journal for all sales captured under this Daily Summary. Individual sale lines are not double-posted.',
+        lines: [...drLines, { acct: '4000', label: 'Sales Revenue - POS (LPG)', dr: 0, cr: total }],
       });
 
-      // COGS is computed in backend using WAC × kg (if available). We show a preview placeholder.
       if (salesKg > 0) {
         lines.push({
-          title: 'COGS (POS)',
-          note: 'Backend will compute WAC × kgSold and post: Dr 5000 / Cr 1200',
+          title: 'COGS (not active)',
+          note: 'COGS is intentionally not posted until inventory costing/WAC is fully activated.',
           lines: [
-            { acct: '5000', label: 'COGS - LPG', dr: 'WAC×KG', cr: 0 },
-            { acct: '1200', label: 'Inventory - LPG', dr: 0, cr: 'WAC×KG' },
+            { acct: '5000', label: 'COGS - LPG', dr: 'Not active', cr: 0 },
+            { acct: '1200', label: 'Inventory - LPG', dr: 0, cr: 'Not active' },
           ],
         });
       }
     }
 
+    (expenseLines || []).forEach((e, idx) => {
+      const amount = safeNum(e?.amount);
+      if (amount <= 0) return;
+      const debit = expenseDebitAccount(e?.category || e?.type);
+      const credit = paymentCreditAccount(e?.paymentDisposition || e?.paymentMethod);
+      lines.push({
+        title: 'Expense ' + (idx + 1) + ': ' + (e?.description || e?.category || 'Expense'),
+        note: 'Expense category determines debit account; payment disposition determines credit account.',
+        lines: [
+          { acct: debit.acct, label: debit.label, dr: amount, cr: 0 },
+          { acct: credit.acct, label: credit.label, dr: 0, cr: amount },
+        ],
+      });
+    });
+
     return lines;
-  }, [summary, salesKg]);
+  }, [summary, salesKg, expenseLines]);
 
   return (
     <div className="space-y-6">
@@ -387,11 +546,58 @@ export default function CloseWorkspace() {
         </div>
       </div>
 
+      <HelpPanel
+        title="Close Workspace Operations Guide"
+        defaultOpen
+        items={[
+          { key: 'sequence', label: 'Close Sequence', help: POS_CLOSE_WORKSPACE_HELP.sequence },
+          { key: 'businessDate', label: 'Business Date', help: POS_CLOSE_WORKSPACE_HELP.businessDate },
+          { key: 'branch', label: 'Branch / Plant', help: POS_CLOSE_WORKSPACE_HELP.branch },
+          { key: 'meter', label: 'Meter Check', help: POS_CLOSE_WORKSPACE_HELP.meter },
+          { key: 'cashVariance', label: 'Cash Variance', help: POS_CLOSE_WORKSPACE_HELP.cashVariance },
+          { key: 'glPreview', label: 'GL Preview', help: POS_CLOSE_WORKSPACE_HELP.glPreview },
+          { key: 'reopen', label: 'Corrections / Reopen', help: POS_CLOSE_WORKSPACE_HELP.reopen },
+        ]}
+      />
+
+      {openDays.length > 0 ? (
+        <Card className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <div className="text-sm font-bold text-amber-200">Open / unresolved daily close items</div>
+              <div className="text-xs text-amber-100/80 mt-1">These days are not fully completed. Select a row to return to that date and branch.</div>
+            </div>
+            <Button variant="secondary" onClick={loadOpenDays}>Refresh Open Days</Button>
+          </div>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+            {openDays.slice(0, 6).map((d) => (
+              <button
+                key={d._id || d.dailySummaryId}
+                type="button"
+                className="text-left p-3 rounded-lg bg-black/20 border border-white/10 hover:bg-white/10"
+                onClick={() => { setBusinessDate(fmtDate(d.date)); setBranchId(String(d.branchId?._id || d.branchId || '')); }}
+              >
+                <div className="text-xs text-gray-400">{fmtDate(d.date)} • {d.branchId?.name || d.branchName || 'Branch'}</div>
+                <div className="text-sm text-white font-semibold mt-1">{String(d.status || '').toUpperCase()}</div>
+                <div className="text-xs text-gray-300 mt-1">Sales: ₦{safeNum(d.sales?.totalRevenue).toLocaleString()} • Expenses: ₦{safeNum(d.expenses?.total).toLocaleString()}</div>
+              </button>
+            ))}
+          </div>
+        </Card>
+      ) : null}
+
       {/* Sticky status bar */}
       <Card className="bg-white/5 border border-white/10 p-4 rounded-xl sticky top-3 z-10">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-end">
           <div className="lg:col-span-3">
-            <label className="text-xs text-gray-400 block mb-1">Business Date (required)</label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-gray-400">Business Date (required)</label>
+              <div className="flex gap-1 text-[10px]">
+                <button type="button" className="px-2 py-1 rounded bg-white/5 text-gray-300 hover:bg-white/10" onClick={() => { const d = businessDate ? new Date(businessDate) : new Date(); d.setDate(d.getDate() - 1); setBusinessDate(d.toISOString().slice(0, 10)); }}>Previous Day</button>
+                <button type="button" className="px-2 py-1 rounded bg-white/5 text-gray-300 hover:bg-white/10" onClick={() => setBusinessDate(new Date().toISOString().slice(0, 10))}>Today</button>
+                <button type="button" className="px-2 py-1 rounded bg-white/5 text-gray-300 hover:bg-white/10" onClick={() => { const d = businessDate ? new Date(businessDate) : new Date(); d.setDate(d.getDate() + 1); setBusinessDate(d.toISOString().slice(0, 10)); }}>Next Day</button>
+              </div>
+            </div>
             <input
               type="date"
               className="w-full px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10"
@@ -406,11 +612,12 @@ export default function CloseWorkspace() {
               className="w-full px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10"
               value={branchId}
               onChange={(e) => setBranchId(e.target.value)}
+              disabled={!branches.length}
             >
-              <option value="">Select branch…</option>
+              <option value="">{branches.length ? 'Select branch…' : 'No assigned branch'}</option>
               {branches.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
+                <option key={getBranchValue(b)} value={getBranchValue(b)}>
+                  {getBranchLabel(b)}
                 </option>
               ))}
             </select>
@@ -426,25 +633,73 @@ export default function CloseWorkspace() {
 
         {/* Actions */}
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button icon={Send} onClick={doSubmitForApproval} disabled={!canSubmit || busyAction}>
+          <Button icon={Send} onClick={doSubmitForApproval} disabled={!canFinalize || busyAction}>
             Submit for approval
           </Button>
-          <Button icon={ClipboardCheck} variant="secondary" onClick={doApprove} disabled={!summary?._id || busyAction}>
+          <Button icon={ClipboardCheck} variant="secondary" onClick={doApprove} disabled={!canApprove || busyAction}>
             Approve
           </Button>
-          <Button icon={XCircle} variant="secondary" onClick={doReject} disabled={!summary?._id || busyAction}>
+          <Button icon={XCircle} variant="secondary" onClick={openRejectBox} disabled={!canReject || busyAction}>
             Reject
           </Button>
-          <Button icon={BookOpen} onClick={doPostToGL} disabled={!canSubmit || busyAction}>
+          <Button icon={BookOpen} onClick={doPostToGL} disabled={!canPostGL || busyAction}>
             Post to GL
           </Button>
-          <Button icon={Hammer} variant="secondary" onClick={doRetryFailed} disabled={!canSubmit || busyAction}>
+          <Button icon={Hammer} variant="secondary" onClick={doRetryFailed} disabled={!canRetry || busyAction}>
             Retry failed
+          </Button>
+          <Button icon={Hammer} variant="secondary" onClick={openReopenBox} disabled={!canReopen || busyAction}>
+            Reopen / Correct
           </Button>
           <div className="ml-auto text-xs text-gray-400 flex items-center">
             <span className="text-gray-500">Scope:</span>&nbsp;<span className="text-white">{branchLabel}</span>&nbsp;•&nbsp;
             <span className="text-gray-500">Date:</span>&nbsp;<span className="text-white">{businessDate || '—'}</span>
           </div>
+        </div>
+
+        {showRejectBox ? (
+          <div className="mt-3 p-4 rounded-xl bg-red-500/10 border border-red-500/20">
+            <label className="text-xs text-red-200 block mb-2 font-semibold">Rejection reason is required</label>
+            <textarea
+              className="w-full min-h-[84px] px-3 py-2 rounded-lg bg-black/30 text-white border border-red-500/20 text-sm"
+              placeholder="Explain why this daily summary is being rejected, for example: cash/transfer split does not match reconciliation or expense evidence is incomplete."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+            />
+            <div className="mt-3 flex flex-wrap gap-2 justify-end">
+              <Button variant="secondary" onClick={cancelReject} disabled={busyAction === 'reject'}>
+                Cancel
+              </Button>
+              <Button icon={XCircle} onClick={doReject} disabled={busyAction === 'reject' || !String(rejectReason || '').trim()}>
+                Confirm rejection
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="mt-3 p-4 rounded-xl bg-black/20 border border-white/10">
+          <div className="text-sm font-bold text-white">Finalization checklist</div>
+          <div className="text-xs text-gray-400 mt-1">Complete these controls before submitting the day for approval.</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 mt-3 text-xs text-gray-200">
+            {[
+              ['meterReadingsConfirmed', 'Meter readings confirmed'],
+              ['salesReviewed', 'Sales reviewed'],
+              ['expensesReviewed', 'Expenses reviewed'],
+              ['reconciliationReviewed', 'Reconciliation reviewed'],
+              ['varianceAcknowledged', 'Variance acknowledged, if any'],
+            ].map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 p-2 rounded-lg bg-white/5 border border-white/10">
+                <input type="checkbox" checked={Boolean(checklist[key])} onChange={(e) => setChecklist((prev) => ({ ...prev, [key]: e.target.checked }))} />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+          <input
+            className="mt-3 w-full px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10 text-xs"
+            placeholder="Variance note / finalization comment, if applicable"
+            value={checklist.varianceReason}
+            onChange={(e) => setChecklist((prev) => ({ ...prev, varianceReason: e.target.value }))}
+          />
         </div>
 
         {/* Enforcement warnings */}
@@ -548,22 +803,24 @@ export default function CloseWorkspace() {
                       <th className="text-right py-2">Qty</th>
                       <th className="text-right py-2">Unit</th>
                       <th className="text-right py-2">Amount</th>
+                      <th className="text-right py-2">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {salesLines.length === 0 ? (
                       <tr>
-                        <td className="py-4 text-gray-500" colSpan={4}>
+                        <td className="py-4 text-gray-500" colSpan={6}>
                           No sales lines found.
                         </td>
                       </tr>
                     ) : (
                       salesLines.map((s, idx) => (
                         <tr key={idx}>
-                          <td className="py-2 text-white">{s?.productName || s?.item || 'Sale'}</td>
-                          <td className="py-2 text-right text-gray-200">{safeNum(s?.quantity).toLocaleString()}</td>
-                          <td className="py-2 text-right text-gray-400">{s?.unit || 'kg'}</td>
-                          <td className="py-2 text-right text-gray-200">₦{safeNum(s?.amount).toLocaleString()}</td>
+                          <td className="py-2 text-white">{s?.productName || s?.item || 'LPG Sale'}</td>
+                          <td className="py-2 text-right text-gray-200">{lineQty(s).toLocaleString()}</td>
+                          <td className="py-2 text-right text-gray-400">{s?.unit || 'kg'} @ ₦{lineUnitPrice(s).toLocaleString()}</td>
+                          <td className="py-2 text-right text-gray-200">₦{lineAmount(s).toLocaleString()}</td>
+                          <td className="py-2 text-right">{canVoidLines && !s?.voiding?.isVoided ? <button onClick={() => handleVoidSale(s)} className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-200 border border-red-500/20">Void</button> : <span className="text-xs text-gray-500">{s?.voiding?.isVoided ? 'Voided' : '—'}</span>}</td>
                         </tr>
                       ))
                     )}
@@ -595,6 +852,7 @@ export default function CloseWorkspace() {
                       <th className="text-left py-2">Disposition</th>
                       <th className="text-right py-2">Amount</th>
                       <th className="text-left py-2">Posting</th>
+                      <th className="text-right py-2">Action</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
@@ -612,6 +870,7 @@ export default function CloseWorkspace() {
                           <td className="py-2 text-gray-300">{e?.paymentDisposition || e?.paymentMethod || '—'}</td>
                           <td className="py-2 text-right text-gray-200">₦{safeNum(e?.amount).toLocaleString()}</td>
                           <td className="py-2 text-gray-400">{e?.posting?.status || '—'}</td>
+                          <td className="py-2 text-right">{canVoidLines && !e?.voiding?.isVoided ? <button onClick={() => handleVoidExpense(e)} className="text-xs px-2 py-1 rounded bg-red-500/10 text-red-200 border border-red-500/20">Void</button> : <span className="text-xs text-gray-500">{e?.voiding?.isVoided ? 'Voided' : '—'}</span>}</td>
                         </tr>
                       ))
                     )}
@@ -797,8 +1056,21 @@ export default function CloseWorkspace() {
                       </div>
                     </>
                   )}
+
                 </div>
-              </div>
+                <div className="p-4 rounded-xl bg-black/20 border border-white/10 lg:col-span-2">
+                  <div className="text-white font-semibold">Posting Batches (selected day)</div>
+                  <div className="mt-3 space-y-2 text-xs">
+                    {batches.length === 0 ? <div className="text-gray-500">No posting batches found.</div> : batches.map((b) => (
+                      <div key={b.batchId || b._id} className="p-3 rounded-lg bg-white/5 border border-white/10">
+                        <div className="flex flex-wrap justify-between gap-2"><span className="font-mono text-gray-200">{b.batchId}</span><span className="text-gray-300">{b.action} • {b.status}</span></div>
+                        <div className="text-gray-400 mt-1">Posted: {JSON.stringify(b.stats?.posted || {})} • Failed: {JSON.stringify(b.stats?.failed || {})}</div>
+                        {b.errorMessage ? <div className="text-red-300 mt-1">{b.errorMessage}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                </div>
             </Card>
           )}
         </>

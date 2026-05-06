@@ -1,294 +1,117 @@
-// src/views/02-Operations/PlantProfitability.js
-import React, { useMemo, useState } from 'react';
+// src/views/01-Finance/PlantProfitability.js
+import React, { useEffect, useState, useCallback } from 'react';
 import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
+import Button from '../../components/shared/Button';
+import HelpPanel from '../../components/shared/HelpPanel';
+import HelpTooltip from '../../components/shared/HelpTooltip';
+import { PLANT_OPS_HELP, GL_HELP } from '../../utils/helpCatalog';
 import { RefreshCw, TrendingUp, AlertTriangle } from 'lucide-react';
 import { formatCurrency } from '../../utils/formatters';
+import { getBranchProfitabilityReport } from '../../api/inventoryService';
+
+const today = () => new Date().toISOString().slice(0, 10);
+const migrationStart = () => '2025-06-01';
+const monthStart = () => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+const yearStart = () => new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10);
+const safeNum = (v, d = 0) => { const n = Number(v); return Number.isFinite(n) ? n : d; };
 
 export default function PlantProfitability() {
-  const [sim, setSim] = useState({
-    sellingPrice: 1100,
-    costPrice: 850,
-    monthlyVolume: 5000,
-    fixedOverheads: 450000,
-    marketingSpend: 50000,
-  });
+  const [period, setPeriod] = useState('allMigrated');
+  const [startDate, setStartDate] = useState(migrationStart());
+  const [endDate, setEndDate] = useState(today());
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const safeNum = (v, d = 0) => {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : d;
-  };
+  useEffect(() => {
+    if (period === 'monthly') { setStartDate(monthStart()); setEndDate(today()); }
+    if (period === 'yearly') { setStartDate(yearStart()); setEndDate(today()); }
+    if (period === 'allMigrated') { setStartDate(migrationStart()); setEndDate(today()); }
+  }, [period]);
 
-  const updateNum = (key, value) => {
-    setSim((prev) => ({
-      ...prev,
-      [key]: safeNum(value, 0),
-    }));
-  };
+  const refresh = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const data = await getBranchProfitabilityReport({ startDate, endDate });
+      setRows(Array.isArray(data?.rows) ? data.rows : []);
+    } catch (e) {
+      setError(e.message || 'Failed to load branch profitability.');
+      setRows([]);
+    } finally { setLoading(false); }
+  }, [startDate, endDate]);
 
-  const metrics = useMemo(() => {
-    const sellingPrice = safeNum(sim.sellingPrice);
-    const costPrice = safeNum(sim.costPrice);
-    const monthlyVolume = safeNum(sim.monthlyVolume);
-    const fixedOverheads = safeNum(sim.fixedOverheads);
-    const marketingSpend = safeNum(sim.marketingSpend);
+  useEffect(() => { refresh(); }, [refresh]);
 
-    const revenue = sellingPrice * monthlyVolume;
-    const cogs = costPrice * monthlyVolume;
-    const grossProfit = revenue - cogs;
-    const totalExpenses = fixedOverheads + marketingSpend;
-    const netProfit = grossProfit - totalExpenses;
+  const totals = rows.reduce((a, r) => ({
+    revenue: a.revenue + safeNum(r.revenue),
+    cogs: a.cogs + safeNum(r.cogs),
+    grossProfit: a.grossProfit + safeNum(r.grossProfit),
+    opex: a.opex + safeNum(r.opex),
+    netProfit: a.netProfit + safeNum(r.netProfit),
+    kgSold: a.kgSold + safeNum(r.kgSold),
+    stockVariance: a.stockVariance + safeNum(r.stockVariance),
+  }), { revenue: 0, cogs: 0, grossProfit: 0, opex: 0, netProfit: 0, kgSold: 0, stockVariance: 0 });
 
-    const grossMarginPerKg = sellingPrice - costPrice;
-    const marginPercent = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
-    const netMarginPercent = revenue > 0 ? (netProfit / revenue) * 100 : 0;
-
-    // Guard against divide-by-zero / negative margin scenario
-    const breakEvenKg = grossMarginPerKg > 0 ? totalExpenses / grossMarginPerKg : Infinity;
-
-    return {
-      sellingPrice,
-      costPrice,
-      monthlyVolume,
-      fixedOverheads,
-      marketingSpend,
-      revenue,
-      cogs,
-      grossProfit,
-      totalExpenses,
-      netProfit,
-      grossMarginPerKg,
-      marginPercent,
-      netMarginPercent,
-      breakEvenKg,
-    };
-  }, [sim]);
-
-  const volumeCap = 20000;
-  const breakEvenMarkerPct =
-    Number.isFinite(metrics.breakEvenKg) && metrics.breakEvenKg > 0
-      ? Math.min((metrics.breakEvenKg / volumeCap) * 100, 100)
-      : 100;
-
-  const currentVolumePct = Math.max(0, Math.min((metrics.monthlyVolume / volumeCap) * 100, 100));
-
-  const isHealthyUnitEconomics = metrics.grossMarginPerKg > 0;
-  const isAboveBreakEven = isHealthyUnitEconomics && metrics.monthlyVolume > metrics.breakEvenKg;
-
-  const resetDefaults = () => {
-    setSim({
-      sellingPrice: 1100,
-      costPrice: 850,
-      monthlyVolume: 5000,
-      fixedOverheads: 450000,
-      marketingSpend: 50000,
-    });
-  };
+  const margin = totals.revenue > 0 ? (totals.grossProfit / totals.revenue) * 100 : 0;
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <PageTitle title="Profitability Simulator" subtitle="Sensitivity Analysis & Stress Testing" />
-        <button
-          onClick={resetDefaults}
-          className="glass-button px-3 py-2 text-xs font-semibold flex items-center"
-          title="Reset values"
-        >
-          <RefreshCw size={14} className="mr-2" />
-          Reset
-        </button>
+      <div className="flex items-center justify-between">
+        <PageTitle title="Branch Profitability" subtitle="Revenue, COGS, gross profit, operating expenses and net profit by plant/branch" />
+        <Button icon={RefreshCw} variant="secondary" onClick={refresh}>{loading ? 'Loading...' : 'Refresh'}</Button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Controls */}
-        <Card className="glass-card border-l-4 border-blue-500 h-fit">
-          <h3 className="font-bold text-white mb-6 flex items-center">
-            <RefreshCw size={20} className="mr-2 text-blue-400" /> Input Variables
-          </h3>
+      <HelpPanel
+        title="Branch profitability guide"
+        items={[
+          { key: 'branchProfitability', label: 'Branch Profitability', help: PLANT_OPS_HELP.branchProfitability },
+          { key: 'wac', label: 'WAC/kg', help: PLANT_OPS_HELP.wac },
+          { key: 'cogsActivation', label: 'COGS', help: PLANT_OPS_HELP.cogsActivation },
+          { key: 'financeConfidence', label: 'Finance Confidence', help: GL_HELP.financeConfidence },
+        ]}
+      />
 
-          <div className="space-y-4">
-            <div>
-              <label className="block text-gray-400 text-xs mb-1">Avg Selling Price (₦/kg)</label>
-              <input
-                type="number"
-                min="0"
-                className="glass-input w-full p-2"
-                value={sim.sellingPrice}
-                onChange={(e) => updateNum('sellingPrice', e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label className="block text-gray-400 text-xs mb-1">Cost Price (₦/kg)</label>
-              <input
-                type="number"
-                min="0"
-                className="glass-input w-full p-2"
-                value={sim.costPrice}
-                onChange={(e) => updateNum('costPrice', e.target.value)}
-              />
-            </div>
-
-            <div>
-              <label className="block text-gray-400 text-xs mb-1">Monthly Volume (kg)</label>
-              <input
-                type="range"
-                min="1000"
-                max={volumeCap}
-                step="100"
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                value={sim.monthlyVolume}
-                onChange={(e) => updateNum('monthlyVolume', e.target.value)}
-              />
-              <div className="text-right text-white font-mono">{metrics.monthlyVolume.toLocaleString()} kg</div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="block text-gray-400 text-xs mb-1">Fixed Costs</label>
-                <input
-                  type="number"
-                  min="0"
-                  className="glass-input w-full p-2"
-                  value={sim.fixedOverheads}
-                  onChange={(e) => updateNum('fixedOverheads', e.target.value)}
-                />
-              </div>
-
-              <div>
-                <label className="block text-gray-400 text-xs mb-1">Marketing</label>
-                <input
-                  type="number"
-                  min="0"
-                  className="glass-input w-full p-2"
-                  value={sim.marketingSpend}
-                  onChange={(e) => updateNum('marketingSpend', e.target.value)}
-                />
-              </div>
-            </div>
-
-            {/* Quick diagnostics */}
-            <div
-              className={`mt-2 p-3 rounded-xl border ${
-                isHealthyUnitEconomics ? 'border-emerald-500/20 bg-emerald-500/10' : 'border-red-500/20 bg-red-500/10'
-              }`}
-            >
-              <div className="text-xs text-gray-300">Unit Margin (₦/kg)</div>
-              <div className={`font-bold ${isHealthyUnitEconomics ? 'text-emerald-300' : 'text-red-300'}`}>
-                {formatCurrency(metrics.grossMarginPerKg)}
-              </div>
-              {!isHealthyUnitEconomics && (
-                <p className="text-[10px] text-red-200 mt-1">
-                  Selling price must exceed cost price to achieve break-even.
-                </p>
-              )}
-            </div>
+      <Card className="bg-white/5 border border-white/10 p-4 rounded-xl">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+          <div>
+            <label className="text-xs text-gray-400">Period</label>
+            <select className="glass-input w-full p-2" value={period} onChange={(e) => setPeriod(e.target.value)}>
+              <option value="monthly">This Month</option>
+              <option value="yearly">This Year</option>
+              <option value="allMigrated">All Migrated Data</option>
+              <option value="custom">Custom Range</option>
+            </select>
           </div>
-        </Card>
+          <div><label className="text-xs text-gray-400">Start Date</label><input className="glass-input w-full p-2" type="date" value={startDate} disabled={period !== 'custom'} onChange={(e) => setStartDate(e.target.value)} /></div>
+          <div><label className="text-xs text-gray-400">End Date</label><input className="glass-input w-full p-2" type="date" value={endDate} disabled={period !== 'custom'} onChange={(e) => setEndDate(e.target.value)} /></div>
+          <div className="md:col-span-2 text-xs text-amber-200 flex items-end gap-1"><AlertTriangle size={14}/> Uses business dates. “This Year” is Jan 1 to today; use Custom Range for June 2025 to date validation. COGS depends on stock-in/opening stock quality.</div>
+        </div>
+      </Card>
 
-        {/* Report Card */}
-        <Card className="lg:col-span-2 glass-card">
-          <h3 className="font-bold text-white mb-6">Financial Projection</h3>
+      {error && <div className="p-3 rounded-xl border border-red-500/20 bg-red-500/10 text-red-200 text-sm">{error}. Confirm the backend has the branch-code/ObjectId profitability fix and that the selected date range includes migrated business dates.</div>}
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            <div
-              className={`p-4 rounded-xl border ${
-                metrics.netProfit > 0 ? 'bg-green-500/10 border-green-500/20' : 'bg-red-500/10 border-red-500/20'
-              }`}
-            >
-              <p className={metrics.netProfit > 0 ? 'text-green-400 text-sm' : 'text-red-400 text-sm'}>Net Profit (Monthly)</p>
-              <p className="text-2xl md:text-3xl font-bold text-white mt-1">{formatCurrency(metrics.netProfit)}</p>
-              <p className="text-[10px] text-gray-400 mt-1">{metrics.netMarginPercent.toFixed(1)}% net margin</p>
-            </div>
-
-            <div className="p-4 bg-blue-500/10 rounded-xl border border-blue-500/20">
-              <p className="text-blue-400 text-sm">Gross Margin</p>
-              <p className="text-2xl md:text-3xl font-bold text-white mt-1">{metrics.marginPercent.toFixed(1)}%</p>
-              <p className="text-[10px] text-gray-400 mt-1">{formatCurrency(metrics.grossProfit)} gross profit</p>
-            </div>
-
-            <div className="p-4 bg-white/5 rounded-xl border border-white/10">
-              <p className="text-gray-300 text-sm">Break-even Status</p>
-              <p className={`text-lg font-bold mt-1 ${isAboveBreakEven ? 'text-emerald-300' : 'text-amber-300'}`}>
-                {isHealthyUnitEconomics ? (isAboveBreakEven ? 'Above BEP' : 'Below BEP') : 'No BEP'}
-              </p>
-              <p className="text-[10px] text-gray-400 mt-1">
-                {Number.isFinite(metrics.breakEvenKg)
-                  ? `${Math.ceil(metrics.breakEvenKg).toLocaleString()} kg required`
-                  : 'Negative/zero unit margin'}
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-3 text-sm">
-            <div className="flex justify-between border-b border-white/5 pb-2">
-              <span className="text-gray-400">Total Revenue</span>
-              <span className="text-white">{formatCurrency(metrics.revenue)}</span>
-            </div>
-            <div className="flex justify-between border-b border-white/5 pb-2">
-              <span className="text-gray-400">COGS</span>
-              <span className="text-red-300">-{formatCurrency(metrics.cogs)}</span>
-            </div>
-            <div className="flex justify-between border-b border-white/5 pb-2">
-              <span className="text-gray-400">Gross Profit</span>
-              <span className={`${metrics.grossProfit >= 0 ? 'text-emerald-300' : 'text-red-300'}`}>
-                {formatCurrency(metrics.grossProfit)}
-              </span>
-            </div>
-            <div className="flex justify-between border-b border-white/5 pb-2">
-              <span className="text-gray-400">Operating Expenses</span>
-              <span className="text-red-300">-{formatCurrency(metrics.totalExpenses)}</span>
-            </div>
-          </div>
-
-          <div className="mt-8">
-            <h4 className="font-bold text-white text-sm mb-2 flex items-center">
-              <TrendingUp size={16} className="mr-2 text-yellow-500" /> Break-Even Analysis
-            </h4>
-
-            <div className="w-full bg-gray-700 h-6 rounded-full overflow-hidden relative">
-              {/* Breakeven Marker */}
-              {Number.isFinite(metrics.breakEvenKg) && (
-                <div
-                  className="absolute top-0 bottom-0 bg-yellow-500 w-1 z-10 shadow-[0_0_10px_rgba(234,179,8,0.8)]"
-                  style={{ left: `${breakEvenMarkerPct}%` }}
-                />
-              )}
-
-              {/* Current Volume */}
-              <div
-                className={`h-full transition-all duration-500 ${
-                  isHealthyUnitEconomics ? (isAboveBreakEven ? 'bg-green-500' : 'bg-red-500') : 'bg-red-600'
-                }`}
-                style={{ width: `${currentVolumePct}%` }}
-              />
-            </div>
-
-            <div className="flex justify-between text-xs mt-2 text-gray-400">
-              <span>0 kg</span>
-              <span className="text-yellow-500 font-bold">
-                {Number.isFinite(metrics.breakEvenKg)
-                  ? `BEP: ${Math.ceil(metrics.breakEvenKg).toLocaleString()} kg`
-                  : 'BEP: N/A'}
-              </span>
-              <span>{volumeCap.toLocaleString()} kg Cap</span>
-            </div>
-
-            <p className="text-xs text-center mt-2 text-gray-500">
-              {!isHealthyUnitEconomics ? (
-                <span className="inline-flex items-center gap-1 text-red-300">
-                  <AlertTriangle size={14} />
-                  Break-even is not possible until selling price exceeds cost price.
-                </span>
-              ) : isAboveBreakEven ? (
-                `You are selling ${Math.ceil(metrics.monthlyVolume - metrics.breakEvenKg).toLocaleString()} kg ABOVE break-even point.`
-              ) : (
-                `You need to sell ${Math.ceil(metrics.breakEvenKg - metrics.monthlyVolume).toLocaleString()} kg more to break even.`
-              )}
-            </p>
-          </div>
-        </Card>
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+        <Card className="p-4 bg-white/5 border border-white/10"><div className="text-xs text-gray-400">Revenue</div><div className="text-xl font-bold text-white">{formatCurrency(totals.revenue)}</div></Card>
+        <Card className="p-4 bg-white/5 border border-white/10"><div className="text-xs text-gray-400 flex items-center gap-1">COGS <HelpTooltip text={PLANT_OPS_HELP.cogsActivation} /></div><div className="text-xl font-bold text-red-300">{formatCurrency(totals.cogs)}</div></Card>
+        <Card className="p-4 bg-white/5 border border-white/10"><div className="text-xs text-gray-400 flex items-center gap-1">Gross Profit <HelpTooltip text={PLANT_OPS_HELP.branchProfitability} /></div><div className="text-xl font-bold text-emerald-300">{formatCurrency(totals.grossProfit)}</div></Card>
+        <Card className="p-4 bg-white/5 border border-white/10"><div className="text-xs text-gray-400">Net Profit</div><div className={(totals.netProfit >= 0 ? 'text-xl font-bold text-emerald-300' : 'text-xl font-bold text-red-300')}>{formatCurrency(totals.netProfit)}</div></Card>
+        <Card className="p-4 bg-white/5 border border-white/10"><div className="text-xs text-gray-400">Gross Margin</div><div className="text-xl font-bold text-white">{margin.toFixed(1)}%</div></Card>
+        <Card className="p-4 bg-white/5 border border-white/10"><div className="text-xs text-gray-400 flex items-center gap-1">Stock Variance <HelpTooltip text={PLANT_OPS_HELP.stockReconciliation} /></div><div className={(totals.stockVariance >= 0 ? 'text-xl font-bold text-emerald-300' : 'text-xl font-bold text-red-300')}>{formatCurrency(totals.stockVariance)}</div></Card>
       </div>
+
+      <Card className="bg-white/5 border border-white/10 p-4 rounded-xl">
+        <h3 className="font-bold text-white flex items-center gap-2"><TrendingUp size={18}/> Branch Profitability Table</h3>
+        <div className="overflow-x-auto mt-4">
+          <table className="w-full text-sm">
+            <thead className="border-b border-white/10 text-gray-400"><tr><th className="text-left py-2">Branch</th><th className="text-right">KG Sold</th><th className="text-right">POS Rev.</th><th className="text-right">Delivery Rev.</th><th className="text-right">Revenue</th><th className="text-right">WAC/kg</th><th className="text-right">COGS</th><th className="text-right">Stock Var.</th><th className="text-right">Gross Profit</th><th className="text-right">OPEX</th><th className="text-right">Net Profit</th><th className="text-right">GM%</th><th className="text-left">COGS Source</th></tr></thead>
+            <tbody className="divide-y divide-white/5">
+              {rows.map((r) => <tr key={r.branchId}><td className="py-2 text-white">{r.branchName}</td><td className="text-right">{safeNum(r.kgSold).toLocaleString()}</td><td className="text-right">{formatCurrency(r.posRevenue)}</td><td className="text-right">{formatCurrency(r.deliveryRevenue)}</td><td className="text-right">{formatCurrency(r.revenue)}</td><td className="text-right">{formatCurrency(r.wacCostPerKg)}</td><td className="text-right text-red-300">{formatCurrency(r.cogs)}</td><td className={safeNum(r.stockVariance) >= 0 ? 'text-right text-emerald-300' : 'text-right text-red-300'}>{formatCurrency(r.stockVariance)}</td><td className="text-right text-emerald-300">{formatCurrency(r.grossProfit)}</td><td className="text-right text-red-300">{formatCurrency(r.opex)}</td><td className={safeNum(r.netProfit) >= 0 ? 'text-right text-emerald-300' : 'text-right text-red-300'}>{formatCurrency(r.netProfit)}</td><td className="text-right">{safeNum(r.grossMarginPct).toFixed(1)}%</td><td className="text-left text-xs text-gray-400">{r.cogsSource || '—'}</td></tr>)}
+              {rows.length === 0 && <tr><td colSpan="13" className="text-center text-gray-500 py-10">No branch profitability data for the selected period.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Card>
     </div>
   );
 }

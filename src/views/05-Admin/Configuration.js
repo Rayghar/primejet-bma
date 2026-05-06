@@ -4,7 +4,8 @@ import PageTitle from '../../components/shared/PageTitle';
 import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
 import Modal from '../../components/shared/Modal';
-import { Save, Sliders, Factory, PlusCircle, Trash2 } from 'lucide-react';
+import { Save, Sliders, Factory, PlusCircle, Trash2, Percent } from 'lucide-react';
+import WhatsAppIntegrationSettings from './WhatsAppIntegrationSettings';
 
 // --- Sub-Component: Add Plant Modal ---
 const AddPlantModal = ({ onClose, onRefresh }) => {
@@ -54,6 +55,24 @@ export default function Configuration() {
     const [saving, setSaving] = useState(false);
     const [showPlantModal, setShowPlantModal] = useState(false);
 
+
+    const updateFeeSetting = (key, value) => {
+        const nextValue = Number.isFinite(Number(value)) ? parseFloat(value) : 0;
+        setConfig(prev => ({
+            ...prev,
+            feeSettings: { ...(prev.feeSettings || {}), [key]: nextValue },
+            ...(key === 'vatPercentage' ? { financialSettings: { ...(prev.financialSettings || {}), vatPercentage: nextValue } } : {})
+        }));
+    };
+
+    const updateFinancialSetting = (key, value) => {
+        const parsed = typeof value === 'boolean' ? value : (Number.isFinite(Number(value)) ? parseFloat(value) : 0);
+        setConfig(prev => ({
+            ...prev,
+            financialSettings: { ...(prev.financialSettings || {}), [key]: parsed }
+        }));
+    };
+
     const fetchData = async () => {
         try {
             const [confRes, plantRes] = await Promise.all([
@@ -95,7 +114,7 @@ export default function Configuration() {
 
     return (
         <div className="space-y-8">
-            <PageTitle title="System Configuration" subtitle="Global pricing, routing rules, and infrastructure" />
+            <PageTitle title="Business Setup" subtitle="Global pricing, routing rules, finance/tax settings and plant infrastructure" />
             
             {/* 1. Global Pricing & Routing (Restored inputs) */}
             <div className="glass-card">
@@ -115,11 +134,12 @@ export default function Configuration() {
                     </div>
                     <div>
                         <label className="block text-sm text-gray-400 mb-2">VAT Rate (%)</label>
-                        <input type="number" className="glass-input w-full p-3" value={config.vatRate || ''} onChange={(e) => setConfig({...config, vatRate: parseFloat(e.target.value)})} />
+                        <input type="number" step="0.01" className="glass-input w-full p-3" value={config.financialSettings?.vatPercentage ?? config.feeSettings?.vatPercentage ?? ''} onChange={(e) => updateFeeSetting('vatPercentage', e.target.value)} />
+                        <p className="text-xs text-gray-500 mt-1">Used by Tax & VAT reports and synchronized with order fee VAT.</p>
                     </div>
                     <div>
                         <label className="block text-sm text-gray-400 mb-2">Delivery Base Fee (₦)</label>
-                        <input type="number" className="glass-input w-full p-3" value={config.deliveryFee || ''} onChange={(e) => setConfig({...config, deliveryFee: parseFloat(e.target.value)})} />
+                        <input type="number" className="glass-input w-full p-3" value={config.feeSettings?.baseDeliveryFee ?? config.deliveryFee ?? ''} onChange={(e) => setConfig({...config, feeSettings: {...(config.feeSettings || {}), baseDeliveryFee: parseFloat(e.target.value)}})} />
                     </div>
                     
                     {/* RESTORED: Routing Specifics */}
@@ -143,6 +163,52 @@ export default function Configuration() {
                 <div className="mt-8 flex justify-end">
                     <Button onClick={handleSaveConfig} disabled={saving} icon={Save} className="glass-button px-8">
                         {saving ? 'Saving...' : 'Save Changes'}
+                    </Button>
+                </div>
+            </div>
+
+            {/* Finance & Tax Settings */}
+            <div className="glass-card">
+                <div className="flex items-center mb-6 text-amber-300 border-b border-white/10 pb-2">
+                    <Percent size={20} className="mr-2"/>
+                    <h3 className="font-bold">Finance & Tax Settings</h3>
+                </div>
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-4 text-sm text-amber-100 mb-6">
+                    Set management-account tax assumptions here. VAT currently defaults to 7.5% and company income tax defaults to 30%, but confirm with your accountant/tax adviser before filing.
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                        <label className="block text-sm text-gray-400 mb-2">Company Income Tax Rate (%)</label>
+                        <input type="number" step="0.01" className="glass-input w-full p-3" value={config.financialSettings?.companyIncomeTaxPercentage ?? 30} onChange={(e) => updateFinancialSetting('companyIncomeTaxPercentage', e.target.value)} />
+                        <p className="text-xs text-gray-500 mt-1">Used for operational management-account tax provision.</p>
+                    </div>
+                    <div>
+                        <label className="block text-sm text-gray-400 mb-2">VAT Output Rate (%)</label>
+                        <input type="number" step="0.01" className="glass-input w-full p-3" value={config.financialSettings?.vatPercentage ?? config.feeSettings?.vatPercentage ?? 7.5} onChange={(e) => updateFeeSetting('vatPercentage', e.target.value)} />
+                        <p className="text-xs text-gray-500 mt-1">Used by Tax & VAT compliance calculations.</p>
+                    </div>
+                    <div>
+                        <label className="block text-sm text-gray-400 mb-2">Withholding Tax Rate (%)</label>
+                        <input type="number" step="0.01" className="glass-input w-full p-3" value={config.financialSettings?.withholdingTaxPercentage ?? 0} onChange={(e) => updateFinancialSetting('withholdingTaxPercentage', e.target.value)} />
+                    </div>
+                    <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-4 md:col-span-2">
+                        <input type="checkbox" className="mt-1" checked={config.financialSettings?.applyCompanyIncomeTaxProvision !== false} onChange={(e) => updateFinancialSetting('applyCompanyIncomeTaxProvision', e.target.checked)} />
+                        <span>
+                            <span className="block text-white font-semibold">Apply company income tax provision in operational financial statements</span>
+                            <span className="block text-xs text-gray-400 mt-1">GL audit mode still uses posted tax journals only. This switch affects management-account operational mode.</span>
+                        </span>
+                    </label>
+                    <label className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-4">
+                        <input type="checkbox" className="mt-1" checked={Boolean(config.financialSettings?.showDscrWhenNoDebt)} onChange={(e) => updateFinancialSetting('showDscrWhenNoDebt', e.target.checked)} />
+                        <span>
+                            <span className="block text-white font-semibold">Show DSCR as 0.00x when no debt exists</span>
+                            <span className="block text-xs text-gray-400 mt-1">Recommended OFF. When off, DSCR shows N/A until a loan/debt service schedule exists.</span>
+                        </span>
+                    </label>
+                </div>
+                <div className="mt-8 flex justify-end">
+                    <Button onClick={handleSaveConfig} disabled={saving} icon={Save} className="glass-button px-8">
+                        {saving ? 'Saving...' : 'Save Finance Settings'}
                     </Button>
                 </div>
             </div>
@@ -177,6 +243,9 @@ export default function Configuration() {
                     ))}
                 </div>
             </div>
+
+            {/* 3. Wave 22C: WhatsApp Live Integration Setup */}
+            <WhatsAppIntegrationSettings />
 
             {showPlantModal && <AddPlantModal onClose={() => setShowPlantModal(false)} onRefresh={fetchData} />}
         </div>

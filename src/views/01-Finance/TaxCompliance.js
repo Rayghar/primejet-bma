@@ -73,6 +73,8 @@ export default function TaxCompliance() {
   }, [report]);
 
   const vatPayable = safeNumber(report?.vatPayable);
+  const vatRatePercentage = safeNumber(report?.vatRatePercentage || 7.5);
+  const taxSettingsSource = report?.taxSettingsSource || 'Default settings';
   const taxableRevenue = safeNumber(report?.taxableRevenue);
   const totalExpenses = safeNumber(report?.totalExpenses);
   const withholdingTax = safeNumber(report?.withholdingTaxPayable || report?.whtPayable || 0);
@@ -81,7 +83,7 @@ export default function TaxCompliance() {
   const totalRegulatoryPayable = vatPayable + withholdingTax + levyPayable;
 
   const dueDateText = report?.filingDueDate || '—';
-  const citStatus = report?.citStatus || 'Pioneer Status Active';
+  const citStatus = report?.citStatus || 'Review with tax advisor';
 
   const isDueSoon = (() => {
     if (!report?.filingDueDate) return false;
@@ -161,7 +163,8 @@ export default function TaxCompliance() {
             </div>
           </div>
 
-          <p className="text-sm text-gray-400">Taxable revenue: {formatCurrency(taxableRevenue)} @ 7.5%</p>
+          <p className="text-sm text-gray-400">Taxable revenue: {formatCurrency(taxableRevenue)} @ {vatRatePercentage.toFixed(2)}%</p>
+          <p className="text-[11px] text-gray-500 mt-1">Rate source: {taxSettingsSource}. Configure in Business Setup → Finance & Tax Settings.</p>
 
           {periodStart && periodEnd && (
             <p className="text-[11px] text-gray-500 mt-2">
@@ -200,7 +203,7 @@ export default function TaxCompliance() {
           <h3 className="font-bold text-white mb-4">Regulatory Summary</h3>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-400">VAT</span>
+              <span className="text-gray-400">VAT ({vatRatePercentage.toFixed(2)}%)</span>
               <span className="text-white">{formatCurrency(vatPayable)}</span>
             </div>
             <div className="flex justify-between">

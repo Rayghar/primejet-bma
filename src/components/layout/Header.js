@@ -1,5 +1,6 @@
 import React from 'react';
 import { Bell, Search } from 'lucide-react';
+import { getRoleLabel } from '../../config/accessControl';
 
 export default function Header({ activeView, user }) {
     return (
@@ -28,7 +29,7 @@ export default function Header({ activeView, user }) {
                 <div className="flex items-center space-x-3 pl-6 border-l border-white/10">
                     <div className="text-right hidden sm:block">
                         <p className="text-sm font-medium text-white">{user?.name}</p>
-                        <p className="text-xs text-gray-500">{user?.role}</p>
+                        <p className="text-xs text-gray-500">{getRoleLabel(user?.role)}</p>
                     </div>
                     <div className="w-9 h-9 rounded-full bg-gradient-to-tr from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold border border-white/20">
                         {user?.name?.[0]}

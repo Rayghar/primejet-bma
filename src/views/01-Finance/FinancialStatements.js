@@ -1,51 +1,128 @@
-// File: src/views/03-Finance/FinancialStatements.js
 import React, { useEffect, useMemo, useState } from 'react';
-import { getFinancialStatements } from '../../api/financialService';
-import { glTrialBalance, glPostingExceptions } from '../../api/glService';
+import { AlertTriangle, CheckCircle2, FileText, Printer, RefreshCw, ShieldCheck, RotateCcw } from 'lucide-react';
+import { getFinancialStatements, getMigrationReconciliationReport } from '../../api/financialService';
+import { glPostingExceptions, glTrialBalance } from '../../api/glService';
 import { getPlants } from '../../api/operationsService';
+import { getBranchOptions } from '../../api/userService';
+import { useAuth } from '../../hooks/useAuth';
+import { normalizeBranchOptions, filterBranchesForUser, chooseDefaultBranch, getBranchValue, getBranchLabel, branchAccessMessage, isUserBranchRestricted } from '../../utils/branchAccess';
 import PageTitle from '../../components/shared/PageTitle';
-import Card from '../../components/shared/Card';
 import Button from '../../components/shared/Button';
-import { Printer, RefreshCw, Activity, AlertTriangle, CheckCircle2, ShieldCheck } from 'lucide-react';
+import HelpPanel from '../../components/shared/HelpPanel';
+import HelpTooltip from '../../components/shared/HelpTooltip';
+import { GL_HELP, PLANT_OPS_HELP } from '../../utils/helpCatalog';
 import { formatCurrency } from '../../utils/formatters';
 
-export default function FinancialStatements() {
-  const [activeTab, setActiveTab] = useState('income');
+const safeNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+const fmtDate = (v) => {
+  if (!v) return '—';
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 10);
+};
+const today = () => new Date().toISOString().slice(0, 10);
+const monthStart = () => new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
+const migrationStart = () => '2025-06-01';
 
+const sourceLabels = {
+  auto: 'Auto: GL when usable, operational fallback when GL has no statement activity',
+  gl: 'GL only: audit-grade posted journals only',
+  operational: 'Operational: POS, orders, expenses and stock records',
+};
+
+const reportingScopeLabels = {
+  migrated_pos_only: 'Migrated POS / DailySummary only',
+  app_delivery_only: 'App delivery orders only',
+  combined_business: 'Combined business view',
+};
+
+function Field({ label, children, hint }) {
+  return (
+    <label className="text-xs text-slate-300 space-y-1">
+      <span className="block">{label}</span>
+      {children}
+      {hint && <span className="block text-[10px] text-slate-500">{hint}</span>}
+    </label>
+  );
+}
+
+function StatementRow({ label, value, pct, indent = false, bold = false, total = false, negative = false }) {
+  const rowClass = total ? 'bg-slate-100 border-t border-slate-400' : bold ? 'bg-slate-50' : '';
+  const display = negative ? `(${formatCurrency(Math.abs(safeNumber(value)))})` : formatCurrency(value);
+  return (
+    <tr className={rowClass}>
+      <td className={`py-2.5 pr-4 ${indent ? 'pl-6 text-slate-600' : 'text-slate-900'} ${bold || total ? 'font-bold' : 'font-medium'}`}>{label}</td>
+      <td className={`py-2.5 text-right font-mono ${negative ? 'text-red-700' : safeNumber(value) < 0 ? 'text-red-700' : 'text-slate-900'} ${bold || total ? 'font-bold' : ''}`}>{display}</td>
+      {pct !== undefined && <td className="py-2.5 text-right text-slate-500 font-mono">{pct}</td>}
+    </tr>
+  );
+}
+
+function BalanceSection({ title, rows = [] }) {
+  const total = rows.reduce((sum, r) => sum + safeNumber(r.value), 0);
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+      <div className="px-4 py-3 bg-slate-100 border-b border-slate-200 font-bold text-slate-900">{title}</div>
+      {rows.length === 0 ? (
+        <div className="px-4 py-3 text-sm text-slate-500">No rows available.</div>
+      ) : (
+        rows.map((r, idx) => (
+          <div key={`${title}-${idx}`} className="flex justify-between gap-4 px-4 py-2.5 border-b border-slate-100 last:border-b-0 text-sm">
+            <span className="text-slate-700">{r.name}</span>
+            <span className="font-mono font-semibold text-slate-900">{formatCurrency(safeNumber(r.value))}</span>
+          </div>
+        ))
+      )}
+      <div className="flex justify-between gap-4 px-4 py-3 bg-slate-50 border-t border-slate-200 text-sm font-bold">
+        <span>Total {title}</span>
+        <span className="font-mono">{formatCurrency(total)}</span>
+      </div>
+    </div>
+  );
+}
+
+export default function FinancialStatements({ setActiveView }) {
+  const { user } = useAuth();
+  const [activeTab, setActiveTab] = useState('income');
   const [branches, setBranches] = useState([]);
   const [branchId, setBranchId] = useState('');
-
   const [period, setPeriod] = useState('monthly');
-  const [customStart, setCustomStart] = useState('');
-  const [customEnd, setCustomEnd] = useState('');
-
+  const [sourceMode, setSourceMode] = useState('auto');
+  const [reportingScope, setReportingScope] = useState('migrated_pos_only');
+  const [customStart, setCustomStart] = useState(migrationStart());
+  const [customEnd, setCustomEnd] = useState(today());
   const [data, setData] = useState(null);
   const [trialBalance, setTrialBalance] = useState(null);
   const [exceptions, setExceptions] = useState(null);
-
+  const [reconciliation, setReconciliation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
 
-  const [showDeliveryBreakdown, setShowDeliveryBreakdown] = useState(true);
-
-  const safeNumber = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
-
-  const canUseCustom = period === 'custom';
-  const startDate = canUseCustom ? customStart : undefined;
-  const endDate = canUseCustom ? customEnd : undefined;
+  const startDate = period === 'custom' ? customStart : undefined;
+  const endDate = period === 'custom' ? customEnd : undefined;
 
   const fetchBranches = async () => {
     try {
-      const plants = await getPlants();
-      const normalized = Array.isArray(plants)
-        ? plants
-            .map((p) => ({
-              id: p?.id || p?._id,
-              name: p?.name || 'Unnamed Branch',
-            }))
-            .filter((x) => x.id)
-        : [];
-      setBranches(normalized);
+      let options = await getBranchOptions();
+      if (!Array.isArray(options) || options.length === 0) {
+        const plants = await getPlants();
+        options = Array.isArray(plants) ? plants : [];
+      }
+      const normalized = normalizeBranchOptions(options);
+      const scoped = filterBranchesForUser(normalized, user || {});
+      setBranches(scoped.map((branch) => ({
+        ...branch,
+        id: getBranchValue(branch),
+        name: getBranchLabel(branch),
+      })));
+
+      if (isUserBranchRestricted(user || {})) {
+        const defaultBranch = chooseDefaultBranch(normalized, user || {});
+        const defaultValue = defaultBranch ? getBranchValue(defaultBranch) : '';
+        setBranchId((current) => {
+          if (current && scoped.some((branch) => getBranchValue(branch) === current)) return current;
+          return defaultValue || current;
+        });
+      }
     } catch (e) {
       console.error('Failed to load branches:', e);
       setBranches([]);
@@ -54,612 +131,380 @@ export default function FinancialStatements() {
 
   const fetchStatements = async () => {
     if (period === 'custom' && (!customStart || !customEnd)) {
+      setErrorMsg('Select both custom start and end dates.');
       setLoading(false);
       return;
     }
-
     setLoading(true);
     setErrorMsg('');
-
     try {
-      const res = await getFinancialStatements(period, startDate, endDate, branchId || undefined);
+      const res = await getFinancialStatements({ period, startDate, endDate, branchIdOrZoneId: branchId || undefined, sourceMode, reportingScope });
       setData(res || null);
-
-      // GL-first support: show trial balance health for same period
       if (res?.period?.start && res?.period?.end) {
-        const s = new Date(res.period.start).toISOString().slice(0, 10);
-        const e = new Date(res.period.end).toISOString().slice(0, 10);
-
-        const [tb, ex] = await Promise.allSettled([
+        const s = fmtDate(res.period.start);
+        const e = fmtDate(res.period.end);
+        const [tb, ex, rec] = await Promise.allSettled([
           glTrialBalance({ startDate: s, endDate: e, branchIdOrZoneId: branchId || undefined }),
           glPostingExceptions({ startDate: s, endDate: e, branchIdOrZoneId: branchId || undefined }),
+          getMigrationReconciliationReport({ period, startDate, endDate, branchIdOrZoneId: branchId || undefined, reportingScope }),
         ]);
-
         setTrialBalance(tb.status === 'fulfilled' ? tb.value : null);
         setExceptions(ex.status === 'fulfilled' ? ex.value : null);
+        setReconciliation(rec.status === 'fulfilled' ? rec.value : null);
       } else {
         setTrialBalance(null);
         setExceptions(null);
+        setReconciliation(null);
       }
     } catch (err) {
       console.error(err);
       setData(null);
       setTrialBalance(null);
       setExceptions(null);
-      setErrorMsg(err?.response?.data?.message || 'Failed to load financial statements.');
+      setReconciliation(null);
+      setErrorMsg(err?.response?.data?.message || err?.message || 'Failed to load financial statements.');
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchBranches();
-  }, []);
-
-  useEffect(() => {
-    fetchStatements();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, customStart, customEnd, branchId]);
-
-  const printStatement = () => window.print();
-
-  const glEnabled = Boolean(data?.gl?.enabled);
-
-  const tbBalanced = useMemo(() => Boolean(trialBalance?.totals?.balanced), [trialBalance]);
-  const failedPostingCount = useMemo(() => safeNumber(exceptions?.totals?.failed, 0), [exceptions]);
-
-  // ----- Core numbers -----
-  const revenueTotal = useMemo(() => safeNumber(data?.income?.revenue?.total), [data]);
-  const cogsTotal = useMemo(() => safeNumber(data?.income?.cogs?.total), [data]);
-  const grossProfit = useMemo(() => safeNumber(data?.income?.grossProfit), [data]);
-  const ebitda = useMemo(() => safeNumber(data?.income?.ebitda), [data]);
-  const depreciation = useMemo(() => safeNumber(data?.income?.depreciation), [data]);
-  const interest = useMemo(() => safeNumber(data?.income?.interest), [data]);
-  const tax = useMemo(() => safeNumber(data?.income?.tax), [data]);
-  const netIncome = useMemo(() => safeNumber(data?.income?.netIncome), [data]);
-
-  const deliveryRecognized = useMemo(() => safeNumber(data?.income?.revenue?.delivery), [data]);
-  const deliveryInvoiced = useMemo(() => safeNumber(data?.income?.revenue?.deliveryInvoiced), [data]);
-  const deliveryUnpaidDelivered = useMemo(() => safeNumber(data?.income?.revenue?.deliveryUnpaidDelivered), [data]);
-
-  const posRevenue = useMemo(() => safeNumber(data?.income?.revenue?.pos), [data]);
-  const otherRevenue = useMemo(() => safeNumber(data?.income?.revenue?.other), [data]);
-
-  const cogsMeta = useMemo(() => {
-    const c = data?.income?.cogs || {};
-    return {
-      purchases: safeNumber(c.purchases),
-      avgCostPerKg: safeNumber(c.avgCostPerKg),
-      totalKgSold: safeNumber(c.totalKgSold),
-    };
-  }, [data]);
-
-  const expenses = useMemo(() => {
-    const e = data?.income?.expenses || {};
-    return {
-      salaries: safeNumber(e.salaries),
-      logistics: safeNumber(e.logistics),
-      utilities: safeNumber(e.utilities),
-      maintenance: safeNumber(e.maintenance),
-      marketing: safeNumber(e.marketing),
-      admin: safeNumber(e.admin),
-      total: safeNumber(e.total),
-      source: e.source || null,
-    };
-  }, [data]);
-
-  const ratios = useMemo(() => {
-    const r = data?.ratios || {};
-    return {
-      grossMargin: safeNumber(r.grossMargin),
-      netMargin: safeNumber(r.netMargin),
-      dscr: safeNumber(r.dscr),
-    };
-  }, [data]);
-
-  const cautions = useMemo(() => {
-    const c = data?.balance?.cautions;
-    return Array.isArray(c) ? c : [];
-  }, [data]);
-
-  const getPercentage = (val, total) => {
-    const t = safeNumber(total);
-    if (t <= 0) return '0.0%';
-    return `${((safeNumber(val) / t) * 100).toFixed(1)}%`;
-  };
+  useEffect(() => { fetchBranches(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [user?.id, user?.branchScope, JSON.stringify(user?.allowedBranches || [])]);
+  useEffect(() => { fetchStatements(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [period, customStart, customEnd, branchId, sourceMode, reportingScope]);
 
   const periodLabel = useMemo(() => {
     if (period === 'custom') return `${customStart || '—'} → ${customEnd || '—'}`;
     if (period === 'monthly') return 'This Month';
     if (period === 'quarterly') return 'This Quarter';
     if (period === 'yearly') return 'This Year';
+    if (period === 'allTime') return 'All Migrated Data';
     return period;
   }, [period, customStart, customEnd]);
 
-  const hasDeliveryBreakdown = useMemo(() => {
-    return !!(
-      data?.income?.revenue &&
-      (Object.prototype.hasOwnProperty.call(data.income.revenue, 'deliveryInvoiced') ||
-        Object.prototype.hasOwnProperty.call(data.income.revenue, 'deliveryUnpaidDelivered'))
-    );
-  }, [data]);
+  const backendPeriodLabel = useMemo(() => data?.period ? `${fmtDate(data.period.start)} → ${fmtDate(data.period.end)}` : null, [data]);
+  const scopeMessage = branchAccessMessage(branches, user || {});
+  const restrictedUser = isUserBranchRestricted(user || {});
+  const selectedBranchName = branches.find((b) => String(b.id) === String(branchId))?.name || (branchId ? branchId : (restrictedUser ? 'All Assigned Branches' : 'All Branches')); 
 
-  const deliveryReconOk = useMemo(() => {
-    if (!hasDeliveryBreakdown) return null;
-    const lhs = safeNumber(deliveryInvoiced);
-    const rhs = safeNumber(deliveryRecognized) + safeNumber(deliveryUnpaidDelivered);
-    const diff = Math.abs(lhs - rhs);
-    return diff <= 1;
-  }, [hasDeliveryBreakdown, deliveryInvoiced, deliveryRecognized, deliveryUnpaidDelivered]);
+  const revenueTotal = safeNumber(data?.income?.revenue?.total);
+  const cogsTotal = safeNumber(data?.income?.cogs?.total);
+  const cogsSaleDepletion = safeNumber(data?.income?.cogs?.saleDepletion ?? data?.income?.cogs?.purchases ?? data?.income?.cogs?.total);
+  const cogsInventoryVariance = safeNumber(data?.income?.cogs?.inventoryVariance);
+  const cogsOtherDirect = Math.max(0, cogsTotal - cogsSaleDepletion - cogsInventoryVariance);
+  const grossProfit = safeNumber(data?.income?.grossProfit);
+  const ebitda = safeNumber(data?.income?.ebitda);
+  const depreciation = safeNumber(data?.income?.depreciation);
+  const interest = safeNumber(data?.income?.interest);
+  const tax = safeNumber(data?.income?.tax);
+  const netIncome = safeNumber(data?.income?.netIncome);
+  const deliveryRecognized = safeNumber(data?.income?.revenue?.delivery);
+  const deliveryInvoiced = safeNumber(data?.income?.revenue?.deliveryInvoiced);
+  const deliveryUnpaidDelivered = safeNumber(data?.income?.revenue?.deliveryUnpaidDelivered);
+  const posRevenue = safeNumber(data?.income?.revenue?.pos);
+  const otherRevenue = safeNumber(data?.income?.revenue?.other);
+  const expenses = data?.income?.expenses || {};
+  const expenseRows = [
+    ['Staff Costs', safeNumber(expenses.salaries)],
+    ['Logistics & Fuel', safeNumber(expenses.logistics)],
+    ['Utilities', safeNumber(expenses.utilities)],
+    ['Maintenance', safeNumber(expenses.maintenance)],
+    ['Marketing', safeNumber(expenses.marketing)],
+    ['Admin & General', safeNumber(expenses.admin)],
+  ];
+  const totalOpex = safeNumber(expenses.total);
+  const getPercentage = (val, total = revenueTotal) => total > 0 ? `${((safeNumber(val) / total) * 100).toFixed(1)}%` : '0.0%';
+  const tbBalanced = Boolean(trialBalance?.totals?.balanced);
+  const failedPostingCount = safeNumber(exceptions?.totals?.failed);
+  const hasAnyStatementValue = Math.abs(revenueTotal) + Math.abs(cogsTotal) + Math.abs(totalOpex) + Math.abs(netIncome) > 0;
+  const sourceUsed = data?.gl?.sourceMode || (data?.gl?.enabled ? 'gl' : 'operational');
+  const glCompleteness = data?.gl?.completeness || null;
+  const glSourceNote = data?.gl?.warning || data?.gl?.fallbackReason || data?.reportingPolicy?.fallbackReason || null;
+  const reportingPolicy = data?.reportingPolicy || null;
+  const reportingScopeInfo = data?.reportingScope || { value: reportingScope, label: reportingScopeLabels[reportingScope] || reportingScope };
+  const excludedAppDelivery = safeNumber(data?.reconciliation?.appDeliveryOrdersOutsideScope?.recognizedRevenue || reconciliation?.appOrders?.recognizedRevenue || 0);
+  const cautions = Array.isArray(data?.balance?.cautions) ? data.balance.cautions : [];
+  const cashFlow = data?.cashFlow || {};
+  const ratios = data?.ratios || {};
 
-  const revenueComponentsSum = useMemo(() => {
-    return safeNumber(deliveryRecognized) + safeNumber(posRevenue) + safeNumber(otherRevenue);
-  }, [deliveryRecognized, posRevenue, otherRevenue]);
+  const dscrRaw = data?.ratios?.dscr;
+  const dscrApplicable = dscrRaw !== null && dscrRaw !== undefined && Number.isFinite(Number(dscrRaw));
+  const dscrStatus = data?.ratios?.dscrStatus || (dscrApplicable ? '' : 'not_applicable');
+  const dscrLabel = dscrApplicable ? `${Number(dscrRaw).toFixed(2)}x` : 'N/A';
+  const dscrExplanation = data?.ratios?.dscrExplanation || (dscrApplicable ? 'DSCR = EBITDA divided by scheduled debt service.' : 'DSCR is not applicable until a loan/debt-service schedule exists.');
+  const taxPolicy = data?.taxPolicy || {};
 
-  const revenueTotalOk = useMemo(() => {
-    const diff = Math.abs(safeNumber(revenueTotal) - safeNumber(revenueComponentsSum));
-    return diff <= 1;
-  }, [revenueTotal, revenueComponentsSum]);
+  if (loading) return <div className="p-10 text-center text-blue-400 animate-pulse">Loading financial statements...</div>;
 
-  const backendPeriodStart = useMemo(() => {
-    const s = data?.period?.start;
-    return s ? new Date(s) : null;
-  }, [data]);
-
-  const backendPeriodEnd = useMemo(() => {
-    const e = data?.period?.end;
-    return e ? new Date(e) : null;
-  }, [data]);
-
-  const backendPeriodLabel = useMemo(() => {
-    if (!backendPeriodStart || !backendPeriodEnd) return null;
-    const fmt = (d) => (Number.isNaN(d.getTime()) ? '—' : d.toISOString().slice(0, 10));
-    return `${fmt(backendPeriodStart)} → ${fmt(backendPeriodEnd)}`;
-  }, [backendPeriodStart, backendPeriodEnd]);
-
-  if (loading) return <div className="p-10 text-center text-blue-400 animate-pulse">Auditing Ledger...</div>;
-
-  if (!data)
+  if (!data) {
     return (
-      <div className="p-10 text-center text-gray-500">
-        {errorMsg || 'No data available.'}
-        {period === 'custom' && (!customStart || !customEnd) && (
-          <div className="text-xs text-gray-400 mt-2">Select both custom start and end dates.</div>
-        )}
-        <div className="mt-4">
-          <Button icon={RefreshCw} onClick={fetchStatements}>
-            Retry
-          </Button>
-        </div>
+      <div className="p-10 text-center text-slate-400">
+        <p>{errorMsg || 'No data available.'}</p>
+        <div className="mt-4"><Button icon={RefreshCw} onClick={fetchStatements}>Retry</Button></div>
       </div>
     );
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center print:hidden">
-        <PageTitle title="Management Accounts" subtitle="GL-first Financial Reporting (Audit-grade when Trial Balance balances)" />
+      <div className="flex flex-wrap justify-between items-center gap-3 print:hidden">
+        <PageTitle title="Financial Statements" subtitle="Management accounts with GL audit mode and operational fallback" />
         <div className="flex gap-2">
-          <Button variant="secondary" icon={RefreshCw} onClick={fetchStatements}>
-            Refresh
-          </Button>
-          <Button variant="secondary" icon={Printer} onClick={printStatement}>
-            Export PDF
-          </Button>
+          {setActiveView && <Button variant="secondary" icon={RotateCcw} onClick={() => setActiveView('GLReversalWorkbench')}>Reverse GL Entries</Button>}
+          <Button variant="secondary" icon={RefreshCw} onClick={fetchStatements}>Refresh</Button>
+          <Button variant="secondary" icon={Printer} onClick={() => window.print()}>Export PDF</Button>
         </div>
       </div>
 
-      {/* GL Banner */}
-      <Card className="bg-white/5 border border-white/10 rounded-xl p-4 print:hidden">
+      <HelpPanel
+        title="Management Accounts guide"
+        items={[
+          { key: 'trialBalance', label: 'Trial Balance', help: GL_HELP.trialBalance },
+          { key: 'periodLock', label: 'Period Lock', help: GL_HELP.periodLock },
+          { key: 'reversal', label: 'GL Reversal', help: 'Open Finance & ERP → GL Reversals, filter the period/branch, request reversal on the journal, then approve it using a different finance/admin user.' },
+          { key: 'branchProfitability', label: 'Branch Profitability', help: PLANT_OPS_HELP.branchProfitability },
+        ]}
+      />
+
+      <div className="bg-slate-900/70 border border-white/10 rounded-2xl p-4 print:hidden space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-white font-semibold">
             <ShieldCheck size={18} className="text-emerald-300" />
-            Statements Source: <span className="text-emerald-300">{glEnabled ? 'GL (audit-grade)' : 'Legacy (operational aggregation)'}</span>
+            Statement source: <span className="text-emerald-300">{sourceUsed === 'gl' ? 'GL audit mode' : 'Operational management mode'}</span>
+            <HelpTooltip text={sourceLabels[sourceMode]} />
           </div>
-
-          <div className="flex items-center gap-3 text-xs">
-            {trialBalance ? (
-              tbBalanced ? (
-                <span className="inline-flex items-center gap-1 text-emerald-300">
-                  <CheckCircle2 size={14} /> Trial Balance Balanced
-                </span>
-              ) : (
-                <span className="inline-flex items-center gap-1 text-amber-300">
-                  <AlertTriangle size={14} /> Trial Balance NOT Balanced
-                </span>
-              )
-            ) : (
-              <span className="text-gray-500">Trial Balance: N/A</span>
-            )}
-
-            {exceptions ? (
-              <span className={`inline-flex items-center gap-1 ${failedPostingCount > 0 ? 'text-amber-300' : 'text-emerald-300'}`}>
-                {failedPostingCount > 0 ? <AlertTriangle size={14} /> : <CheckCircle2 size={14} />}
-                Posting failures: {failedPostingCount}
-              </span>
-            ) : (
-              <span className="text-gray-500">Posting failures: N/A</span>
-            )}
+          <div className="flex flex-wrap gap-3 text-xs">
+            {trialBalance ? <span className={tbBalanced ? 'text-emerald-300' : 'text-amber-300'}>{tbBalanced ? '✓ Trial Balance Balanced' : '⚠ Trial Balance NOT Balanced'}</span> : <span className="text-slate-500">Trial Balance: N/A</span>}
+            {exceptions ? <span className={failedPostingCount > 0 ? 'text-amber-300' : 'text-emerald-300'}>Posting failures: {failedPostingCount}</span> : <span className="text-slate-500">Posting failures: N/A</span>}
           </div>
         </div>
 
-        {!tbBalanced && trialBalance ? (
-          <div className="mt-3 text-[11px] text-amber-200 bg-amber-500/10 border border-amber-500/20 rounded-xl p-3">
-            Your Trial Balance is not balanced for this period. In GL-first mode, that means statements may be unreliable until posting issues are fixed.
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+          <Field label="Branch">
+            <select className="w-full px-3 py-2 rounded-xl bg-slate-950 text-white border border-white/10" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+              <option value="">{restrictedUser ? 'All Assigned Branches' : 'All Branches'}</option>
+              {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </Field>
+          <Field label="Period">
+            <select className="w-full px-3 py-2 rounded-xl bg-slate-950 text-white border border-white/10" value={period} onChange={(e) => setPeriod(e.target.value)}>
+              <option value="monthly">This Month</option>
+              <option value="quarterly">This Quarter</option>
+              <option value="yearly">This Year</option>
+              <option value="allTime">All Migrated Data</option>
+              <option value="custom">Custom Range</option>
+            </select>
+          </Field>
+          <Field label="Start Date" hint={period !== 'custom' ? 'Enabled for Custom Range' : 'Set to 2025-06-01 to validate full migrated data'}>
+            <input type="date" disabled={period !== 'custom'} className="w-full px-3 py-2 rounded-xl bg-slate-950 text-white border border-white/10 disabled:opacity-50" value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
+          </Field>
+          <Field label="End Date" hint={period !== 'custom' ? 'Enabled for Custom Range' : ''}>
+            <input type="date" disabled={period !== 'custom'} className="w-full px-3 py-2 rounded-xl bg-slate-950 text-white border border-white/10 disabled:opacity-50" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
+          </Field>
+          <Field label="Source Mode">
+            <select className="w-full px-3 py-2 rounded-xl bg-slate-950 text-white border border-white/10" value={sourceMode} onChange={(e) => setSourceMode(e.target.value)}>
+              <option value="auto">Auto</option>
+              <option value="gl">GL only</option>
+              <option value="operational">Operational</option>
+            </select>
+          </Field>
+          <Field label="Reporting Scope" hint="Use POS-only to validate migrated daily sales.">
+            <select className="w-full px-3 py-2 rounded-xl bg-slate-950 text-white border border-white/10" value={reportingScope} onChange={(e) => setReportingScope(e.target.value)}>
+              <option value="migrated_pos_only">Migrated POS only</option>
+              <option value="app_delivery_only">App delivery only</option>
+              <option value="combined_business">Combined business</option>
+            </select>
+          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3 text-xs">
+          <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3"><span className="text-slate-400">UI Period</span><div className="text-white font-semibold">{periodLabel}</div></div>
+          <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3"><span className="text-slate-400">Backend Range</span><div className="text-white font-semibold">{backendPeriodLabel || '—'}</div></div>
+          <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3"><span className="text-slate-400">Branch</span><div className="text-white font-semibold">{selectedBranchName}</div></div>
+          <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3"><span className="text-slate-400">OPEX Source</span><div className="text-white font-semibold">{expenses.source || 'N/A'}</div></div>
+          <div className="rounded-xl bg-slate-950/60 border border-white/10 p-3"><span className="text-slate-400">Reporting Scope</span><div className="text-white font-semibold">{reportingScopeInfo.label || reportingScopeLabels[reportingScope]}</div></div>
+        </div>
+
+        {reportingPolicy && (
+          <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3 text-sm text-emerald-100">
+            <b>Date/source basis:</b> {reportingPolicy.dateRange?.basis || 'business_date'} · {reportingPolicy.sourceOfTruth?.auto || 'Auto mode uses GL only when complete.'}
           </div>
-        ) : null}
-      </Card>
-
-      {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-end bg-white/5 p-4 rounded-xl print:hidden">
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-gray-400">Branch</label>
-          <select
-            className="px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10"
-            value={branchId}
-            onChange={(e) => setBranchId(e.target.value)}
-          >
-            <option value="">All Branches</option>
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>
-                {b.name}
-              </option>
-            ))}
-          </select>
-          <p className="text-[10px] text-gray-500 mt-1">Maps to branchId / serviceZoneId</p>
-        </div>
-
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-gray-400">Period</label>
-          <select
-            className="px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10"
-            value={period}
-            onChange={(e) => setPeriod(e.target.value)}
-          >
-            <option value="monthly">Monthly</option>
-            <option value="quarterly">Quarterly</option>
-            <option value="yearly">Yearly</option>
-            <option value="custom">Custom</option>
-          </select>
-        </div>
-
-        {period === 'custom' && (
-          <>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Start</label>
-              <input
-                type="date"
-                className="px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10"
-                value={customStart}
-                onChange={(e) => setCustomStart(e.target.value)}
-              />
-            </div>
-
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">End</label>
-              <input
-                type="date"
-                className="px-3 py-2 rounded-lg bg-black/30 text-white border border-white/10"
-                value={customEnd}
-                onChange={(e) => setCustomEnd(e.target.value)}
-              />
-            </div>
-          </>
         )}
 
-        <div className="ml-auto text-xs text-gray-400 space-y-1">
-          <div>
-            Period (UI): <span className="text-white">{periodLabel}</span>
+        {excludedAppDelivery > 0 && reportingScope === 'migrated_pos_only' && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            <b>App delivery orders excluded:</b> {formatCurrency(excludedAppDelivery)} was detected from delivered app orders, but it is excluded from this migrated POS view to avoid double-counting daily close sales. Select <b>Combined business</b> only if those orders are standalone and not already included in daily summaries.
           </div>
-          {backendPeriodLabel && (
-            <div className="text-[10px] text-gray-500">
-              Backend range: <span className="text-gray-300">{backendPeriodLabel}</span>
+        )}
+
+        {reconciliation && (
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+            <div className="rounded-xl border border-white/10 bg-slate-950/70 p-3">
+              <span className="text-slate-400">Imported Source Revenue</span>
+              <div className="text-white font-bold">{formatCurrency(safeNumber(reconciliation.source?.revenue))}</div>
+              <div className="text-[10px] text-slate-500 mt-1">
+                Rows used: {safeNumber(reconciliation.source?.dailySalesRows).toLocaleString()} daily sales · Duplicates ignored: {safeNumber(reconciliation.source?.duplicatesIgnored).toLocaleString()}
+              </div>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-slate-950/70 p-3"><span className="text-slate-400">Operational POS Revenue</span><div className="text-white font-bold">{formatCurrency(safeNumber(reconciliation.operational?.posRevenue))}</div></div>
+            <div className="rounded-xl border border-white/10 bg-slate-950/70 p-3"><span className="text-slate-400">GL POS Revenue / TB 4000</span><div className="text-white font-bold">{formatCurrency(safeNumber(reconciliation.gl?.revenuePOS))}</div></div>
+            <div className="rounded-xl border border-white/10 bg-slate-950/70 p-3"><span className="text-slate-400">GL 5000 vs Operational COGS Diff</span><div className={Math.abs(safeNumber(reconciliation.differences?.glVsOperationalCogs)) > 1 ? 'text-amber-300 font-bold' : 'text-emerald-300 font-bold'}>{formatCurrency(safeNumber(reconciliation.differences?.glVsOperationalCogs))}</div></div>
+          </div>
+        )}
+
+        {reconciliation?.source?.duplicatesIgnored > 0 && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            <b>Migration source diagnostic cleaned:</b> {safeNumber(reconciliation.source.duplicatesIgnored).toLocaleString()} duplicate staging rows were ignored. This prevents repeated upload/import attempts from inflating the source-control revenue card.
+          </div>
+        )}
+
+        {taxPolicy?.source && (
+          <div className="rounded-xl border border-slate-500/30 bg-slate-500/10 p-3 text-sm text-slate-100">
+            <b>Tax policy:</b> CIT {safeNumber(taxPolicy.companyIncomeTaxPercentage).toFixed(2)}%, VAT {safeNumber(taxPolicy.vatPercentage).toFixed(2)}%. Manage this in <b>Business Setup → Finance & Tax Settings</b>. {taxPolicy.note ? <span>{taxPolicy.note}</span> : null}
+          </div>
+        )}
+
+        {period === 'yearly' && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            <b>This Year</b> is calendar-year-to-date only. For your migration validation, use <b>All Migrated Data</b> or <b>Custom Range</b> from 2025-06-01 to today.
+          </div>
+        )}
+
+        {restrictedUser && (
+          <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-100">
+            <b>Investor branch scope active:</b> this page is restricted to {selectedBranchName}. {scopeMessage ? <span>{scopeMessage}</span> : null}
+          </div>
+        )}
+
+        {glSourceNote && (
+          <div className="rounded-xl border border-blue-500/30 bg-blue-500/10 p-3 text-sm text-blue-100">
+            <b>Statement source note:</b> {glSourceNote}
+            {glCompleteness ? (
+              <span className="block mt-1 text-xs text-blue-200">
+                Posting backlog in selected range — Daily summaries: {glCompleteness.dailySummaries || 0}, Expenses: {glCompleteness.expenses || 0}, Stock-in: {glCompleteness.stockIns || 0}, Failed journals: {glCompleteness.failedJournals || 0}.
+              </span>
+            ) : null}
+          </div>
+        )}
+
+        {!hasAnyStatementValue && (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-100">
+            No revenue, COGS or OPEX values were found for this source/period. Try <b>Operational</b> mode, widen the period, or confirm that approved sales/expenses have been posted to GL.
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-wrap gap-1 bg-white/5 p-1 rounded-xl w-fit print:hidden">
+        {[
+          ['income', 'P&L'],
+          ['balance', 'Balance Sheet'],
+          ['cashflow', 'Cash Flow'],
+          ['ratios', 'Ratios'],
+          ['notes', 'Notes'],
+        ].map(([id, label]) => (
+          <button key={id} onClick={() => setActiveTab(id)} className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === id ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>{label}</button>
+        ))}
+      </div>
+
+      <div className="max-w-6xl mx-auto rounded-2xl shadow-2xl overflow-hidden border border-slate-200" style={{ background: '#ffffff', color: '#111827', backdropFilter: 'none' }}>
+        <div className="px-10 py-8 border-b border-slate-200 bg-white">
+          <div className="flex flex-wrap justify-between gap-4 items-start">
+            <div>
+              <h1 className="text-2xl font-black tracking-[0.25em] uppercase text-slate-950">PrimeJet Gas Ltd</h1>
+              <h2 className="text-base font-bold text-slate-600 uppercase mt-2">
+                {activeTab === 'income' ? 'Statement of Comprehensive Income' : activeTab === 'balance' ? 'Statement of Financial Position' : activeTab === 'cashflow' ? 'Cash Flow Statement' : activeTab === 'ratios' ? 'Financial Ratios & Covenants' : 'Statement Notes'}
+              </h2>
+            </div>
+            <div className="text-right text-xs text-slate-600">
+              <div><b>Period:</b> {periodLabel}</div>
+              <div><b>Backend range:</b> {backendPeriodLabel}</div>
+              <div><b>Branch:</b> {selectedBranchName}</div>
+              <div><b>Source:</b> {sourceUsed}</div>
+              <div><b>Scope:</b> {reportingScopeInfo.label || reportingScopeLabels[reportingScope]}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-10 bg-white">
+          {activeTab === 'income' && (
+            <table className="w-full text-sm border-collapse">
+              <thead className="border-b-2 border-slate-900 text-slate-900">
+                <tr><th className="text-left py-3">Item</th><th className="text-right py-3">Amount</th><th className="text-right py-3">% Revenue</th></tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                <StatementRow label="REVENUE" value={revenueTotal} pct="100.0%" bold />
+                <StatementRow label="Delivery Revenue" value={deliveryRecognized} pct={getPercentage(deliveryRecognized)} indent />
+                <StatementRow label="POS Revenue" value={posRevenue} pct={getPercentage(posRevenue)} indent />
+                <StatementRow label="Other Revenue" value={otherRevenue} pct={getPercentage(otherRevenue)} indent />
+                <StatementRow label="Cost of Sales (LPG)" value={cogsSaleDepletion} pct={getPercentage(cogsSaleDepletion)} indent negative />
+                {cogsInventoryVariance > 0 && <StatementRow label="Inventory Variance / Shrinkage" value={cogsInventoryVariance} pct={getPercentage(cogsInventoryVariance)} indent negative />}
+                {cogsOtherDirect > 0 && <StatementRow label="Other Direct Cost" value={cogsOtherDirect} pct={getPercentage(cogsOtherDirect)} indent negative />}
+                <StatementRow label="GROSS PROFIT" value={grossProfit} pct={getPercentage(grossProfit)} total />
+                <StatementRow label="Operating Expenses" value={totalOpex} pct={getPercentage(totalOpex)} bold negative />
+                {expenseRows.map(([label, val]) => <StatementRow key={label} label={label} value={val} pct={getPercentage(val)} indent negative />)}
+                <StatementRow label="EBITDA" value={ebitda} pct={getPercentage(ebitda)} total />
+                <StatementRow label="Depreciation" value={depreciation} pct={getPercentage(depreciation)} indent negative />
+                <StatementRow label="Interest" value={interest} pct={getPercentage(interest)} indent negative />
+                <StatementRow label="Tax" value={tax} pct={getPercentage(tax)} indent negative />
+                <StatementRow label="NET INCOME" value={netIncome} pct={getPercentage(netIncome)} total />
+              </tbody>
+            </table>
+          )}
+
+          {activeTab === 'balance' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <BalanceSection title="Assets" rows={data?.balance?.assets || []} />
+              <BalanceSection title="Liabilities" rows={data?.balance?.liabilities || []} />
+              <BalanceSection title="Equity" rows={data?.balance?.equity || []} />
+            </div>
+          )}
+
+          {activeTab === 'cashflow' && (
+            <table className="w-full text-sm border-collapse">
+              <thead className="border-b-2 border-slate-900"><tr><th className="text-left py-3">Cash Flow Area</th><th className="text-right py-3">Amount</th></tr></thead>
+              <tbody className="divide-y divide-slate-200">
+                <StatementRow label="Net cash from operating activities" value={safeNumber(cashFlow.operating)} />
+                <StatementRow label="Net cash from investing activities" value={safeNumber(cashFlow.investing)} />
+                <StatementRow label="Net cash from financing activities" value={safeNumber(cashFlow.financing)} />
+                <StatementRow label="NET CASH MOVEMENT" value={safeNumber(cashFlow.operating) + safeNumber(cashFlow.investing) + safeNumber(cashFlow.financing)} total />
+              </tbody>
+            </table>
+          )}
+
+          {activeTab === 'ratios' && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="border border-slate-200 rounded-xl p-5 bg-slate-50"><div className="text-xs uppercase text-slate-500 font-bold">Gross Margin</div><div className="text-3xl font-black text-slate-900 mt-2">{safeNumber(ratios.grossMargin).toFixed(1)}%</div></div>
+              <div className="border border-slate-200 rounded-xl p-5 bg-slate-50"><div className="text-xs uppercase text-slate-500 font-bold">Net Margin</div><div className="text-3xl font-black text-slate-900 mt-2">{safeNumber(ratios.netMargin).toFixed(1)}%</div></div>
+              <div className="border border-slate-200 rounded-xl p-5 bg-slate-50">
+                <div className="text-xs uppercase text-slate-500 font-bold">DSCR</div>
+                <div className={`text-3xl font-black mt-2 ${!dscrApplicable ? 'text-slate-500' : safeNumber(ratios.dscr) >= 1.25 ? 'text-green-700' : 'text-red-700'}`}>{dscrLabel}</div>
+                <div className="text-xs text-slate-500 mt-2">{dscrStatus === 'not_applicable' ? 'No debt service found for selected period.' : 'Bank target: > 1.25x'}</div>
+                <div className="text-[11px] text-slate-500 mt-2">{dscrExplanation}</div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'notes' && (
+            <div className="space-y-5 text-sm text-slate-700">
+              <div className="border border-slate-200 rounded-xl p-4 bg-slate-50">
+                <h3 className="font-bold text-slate-950 mb-2 flex items-center gap-2"><FileText size={16}/> Revenue Recognition</h3>
+                <p>Recognized delivery revenue included in this statement: <b>{formatCurrency(deliveryRecognized)}</b>. Delivered/invoiced revenue included: <b>{formatCurrency(deliveryInvoiced)}</b>. Delivered but unpaid included: <b>{formatCurrency(deliveryUnpaidDelivered)}</b>. App delivery revenue outside the selected scope: <b>{formatCurrency(excludedAppDelivery)}</b>.</p>
+              </div>
+              <div className="border border-slate-200 rounded-xl p-4 bg-slate-50">
+                <h3 className="font-bold text-slate-950 mb-2">COGS / Stock Basis</h3>
+                <p>COGS now uses <b>{data?.income?.cogs?.source || 'StockMovement/GL'}</b>. Sale depletion/account 5000: <b>{formatCurrency(cogsSaleDepletion)}</b>; inventory variance/account 5100: <b>{formatCurrency(cogsInventoryVariance)}</b>; total direct cost deducted before gross profit: <b>{formatCurrency(cogsTotal)}</b>; sale KG: <b>{safeNumber(data?.income?.cogs?.saleKg || data?.income?.cogs?.totalKgSold).toLocaleString()}</b>.</p>
+              </div>
+              <div className="border border-slate-200 rounded-xl p-4 bg-slate-50">
+                <h3 className="font-bold text-slate-950 mb-2">Tax / VAT Settings</h3>
+                <p>Current management-account assumptions: CIT <b>{safeNumber(taxPolicy.companyIncomeTaxPercentage).toFixed(2)}%</b>, VAT <b>{safeNumber(taxPolicy.vatPercentage).toFixed(2)}%</b>. Update these in <b>Administration → Business Setup → Finance & Tax Settings</b>. GL mode uses posted tax journals for audit-grade tax; operational mode can calculate a management tax provision from these settings.</p>
+              </div>
+              {cautions.length > 0 && <div className="border border-amber-200 rounded-xl p-4 bg-amber-50"><h3 className="font-bold text-amber-900 mb-2 flex items-center gap-2"><AlertTriangle size={16}/> Notes / Cautions</h3><ul className="list-disc pl-5 space-y-1 text-amber-900">{cautions.map((c, idx) => <li key={idx}>{String(c)}</li>)}</ul></div>}
+              <div className="border border-slate-200 rounded-xl p-4 bg-white">
+                <h3 className="font-bold text-slate-950 mb-2 flex items-center gap-2"><CheckCircle2 size={16}/> Reversal Guidance</h3>
+                <p>Financial statements are read-only. To reverse a journal, go to <b>Finance & ERP → GL Reversals</b>, select the date range/branch, click <b>Request reversal</b> against the posted journal, and approve the request using an authorized finance/admin user.</p>
+              </div>
             </div>
           )}
         </div>
       </div>
-
-      {/* Diagnostics */}
-      <div className="print:hidden">
-        <Card className="bg-white/5 p-4 rounded-xl border border-white/10">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-sm font-semibold text-white flex items-center gap-2">
-                <Activity size={16} />
-                Accuracy & Reconciliation Checks
-              </div>
-              <p className="text-xs text-gray-400 mt-1">
-                These checks help explain dashboard/statement mismatches (recognized vs invoiced delivery revenue, and date fields).
-              </p>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {hasDeliveryBreakdown && (
-                <button
-                  onClick={() => setShowDeliveryBreakdown((v) => !v)}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-black/30 border border-white/10 text-gray-200 hover:text-white"
-                >
-                  {showDeliveryBreakdown ? 'Hide' : 'Show'} Delivery Breakdown
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="p-3 rounded-lg bg-black/20 border border-white/10">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-400">Revenue components sum</span>
-                {revenueTotalOk ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-emerald-300">
-                    <CheckCircle2 size={14} /> OK
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-xs text-amber-300">
-                    <AlertTriangle size={14} /> Check
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 text-sm text-white font-semibold">{formatCurrency(revenueComponentsSum)}</div>
-              <div className="mt-1 text-[10px] text-gray-500">
-                Should match Revenue Total: <span className="text-gray-300">{formatCurrency(revenueTotal)}</span>
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-black/20 border border-white/10">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-400">Delivery recognition</span>
-                {deliveryReconOk === null ? (
-                  <span className="text-[10px] text-gray-500">N/A</span>
-                ) : deliveryReconOk ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-emerald-300">
-                    <CheckCircle2 size={14} /> OK
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 text-xs text-amber-300">
-                    <AlertTriangle size={14} /> Check
-                  </span>
-                )}
-              </div>
-              <div className="mt-1 text-[11px] text-gray-300">
-                Recognized (paid): <span className="text-white font-semibold">{formatCurrency(deliveryRecognized)}</span>
-              </div>
-              <div className="mt-1 text-[11px] text-gray-300">
-                Invoiced (delivered): <span className="text-white font-semibold">{formatCurrency(deliveryInvoiced || 0)}</span>
-              </div>
-              <div className="mt-1 text-[11px] text-gray-300">
-                Unpaid delivered: <span className="text-white font-semibold">{formatCurrency(deliveryUnpaidDelivered || 0)}</span>
-              </div>
-              <div className="mt-1 text-[10px] text-gray-500">
-                Rule: invoiced = recognized + unpaid (Delivered but unpaid becomes receivable, not revenue).
-              </div>
-            </div>
-
-            <div className="p-3 rounded-lg bg-black/20 border border-white/10">
-              <div className="text-xs text-gray-400">COGS + Expense Source</div>
-              <ul className="mt-2 space-y-1 text-[11px] text-gray-300 list-disc pl-4">
-                <li>
-                  COGS: {cogsMeta.totalKgSold.toLocaleString()} kg × ₦{cogsMeta.avgCostPerKg.toFixed(2)}
-                </li>
-                <li>Expenses source: <span className="text-gray-100">{expenses.source || 'N/A'}</span></li>
-                <li>GL-first: Trial balance must balance.</li>
-              </ul>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex space-x-1 bg-white/5 p-1 rounded-xl w-fit mb-4 print:hidden">
-        {['income', 'balance', 'ratios'].map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-6 py-2 rounded-lg text-sm font-medium transition-all capitalize ${
-              activeTab === tab ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            {tab === 'income' ? 'P&L' : tab === 'balance' ? 'Balance Sheet' : 'Bank Ratios'}
-          </button>
-        ))}
-      </div>
-
-      <Card className="min-h-[600px] bg-white text-black p-8 rounded-none max-w-5xl mx-auto print:w-full print:shadow-none">
-        <div className="text-center border-b-2 border-black pb-4 mb-8">
-          <h1 className="text-2xl font-bold uppercase tracking-widest text-black">PrimeJet Gas Ltd</h1>
-          <h2 className="text-lg font-medium text-gray-600 uppercase mt-1">
-            {activeTab === 'ratios'
-              ? 'Financial Ratios & Covenants'
-              : activeTab === 'income'
-              ? 'Statement of Comprehensive Income'
-              : 'Statement of Financial Position'}
-          </h2>
-          <p className="text-xs text-gray-500 mt-2">
-            Period: {periodLabel} {branchId ? `| Branch: ${branchId}` : '| All Branches'}
-          </p>
-          {backendPeriodLabel && <p className="text-[10px] text-gray-400 mt-1">Backend range: {backendPeriodLabel}</p>}
-        </div>
-
-        {/* --- PROFIT & LOSS --- */}
-        {activeTab === 'income' && (
-          <>
-            <table className="w-full text-sm">
-              <thead className="border-b-2 border-black">
-                <tr>
-                  <th className="text-left py-2">Item</th>
-                  <th className="text-right py-2">Amount (₦)</th>
-                  <th className="text-right py-2 text-gray-500">% Rev</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                <tr className="font-bold bg-gray-50">
-                  <td className="py-2">REVENUE</td>
-                  <td className="text-right">{formatCurrency(revenueTotal)}</td>
-                  <td className="text-right">100%</td>
-                </tr>
-
-                <tr>
-                  <td className="pl-4 py-1 text-gray-600">Cost of Sales (LPG)</td>
-                  <td className="text-right text-red-600">({formatCurrency(cogsTotal)})</td>
-                  <td className="text-right text-gray-500">{getPercentage(cogsTotal, revenueTotal)}</td>
-                </tr>
-
-                <tr className="font-bold bg-blue-50">
-                  <td className="py-2">GROSS PROFIT</td>
-                  <td className="text-right">{formatCurrency(grossProfit)}</td>
-                  <td className="text-right">{getPercentage(grossProfit, revenueTotal)}</td>
-                </tr>
-
-                <tr>
-                  <td className="py-2 font-semibold">Operating Expenses</td>
-                  <td />
-                  <td />
-                </tr>
-
-                {[
-                  ['Staff Costs', expenses.salaries],
-                  ['Logistics & Fuel', expenses.logistics],
-                  ['Utilities', expenses.utilities],
-                  ['Maintenance', expenses.maintenance],
-                  ['Marketing', expenses.marketing],
-                  ['Admin & General', expenses.admin],
-                ].map(([label, val]) => (
-                  <tr key={label}>
-                    <td className="pl-4 py-1 text-gray-600">{label}</td>
-                    <td className="text-right text-red-600">({formatCurrency(val)})</td>
-                    <td className="text-right text-gray-500">{getPercentage(val, revenueTotal)}</td>
-                  </tr>
-                ))}
-
-                <tr className="font-bold bg-gray-50">
-                  <td className="py-2">TOTAL OPEX</td>
-                  <td className="text-right text-red-700">({formatCurrency(expenses.total)})</td>
-                  <td className="text-right text-gray-500">{getPercentage(expenses.total, revenueTotal)}</td>
-                </tr>
-
-                <tr className="font-bold border-t border-black text-lg">
-                  <td className="py-4">EBITDA</td>
-                  <td className={`text-right ${ebitda >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                    {formatCurrency(ebitda)}
-                  </td>
-                  <td className="text-right">{getPercentage(ebitda, revenueTotal)}</td>
-                </tr>
-
-                <tr>
-                  <td className="pl-4 py-1 text-gray-600">Depreciation</td>
-                  <td className="text-right text-red-600">({formatCurrency(depreciation)})</td>
-                  <td className="text-right text-gray-500">{getPercentage(depreciation, revenueTotal)}</td>
-                </tr>
-
-                <tr>
-                  <td className="pl-4 py-1 text-gray-600">Interest</td>
-                  <td className="text-right text-red-600">({formatCurrency(interest)})</td>
-                  <td className="text-right text-gray-500">{getPercentage(interest, revenueTotal)}</td>
-                </tr>
-
-                <tr>
-                  <td className="pl-4 py-1 text-gray-600">Tax</td>
-                  <td className="text-right text-red-600">({formatCurrency(tax)})</td>
-                  <td className="text-right text-gray-500">{getPercentage(tax, revenueTotal)}</td>
-                </tr>
-
-                <tr className="font-bold border-t border-black text-lg">
-                  <td className="py-4">NET INCOME</td>
-                  <td className={`text-right ${netIncome >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                    {formatCurrency(netIncome)}
-                  </td>
-                  <td className="text-right">{getPercentage(netIncome, revenueTotal)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </>
-        )}
-
-        {/* --- BALANCE SHEET --- */}
-        {activeTab === 'balance' && (
-          <div className="space-y-6">
-            <div>
-              <h3 className="font-bold text-black mb-2">ASSETS</h3>
-              <div className="border border-gray-200 rounded">
-                {Array.isArray(data?.balance?.assets) &&
-                  data.balance.assets.map((a, idx) => (
-                    <div key={idx} className="flex justify-between p-3 border-b border-gray-100 last:border-b-0">
-                      <span>{a.name}</span>
-                      <span className="font-mono font-bold">{formatCurrency(safeNumber(a.value))}</span>
-                    </div>
-                  ))}
-              </div>
-
-              {cautions.length > 0 && (
-                <div className="mt-3 border border-amber-200 bg-amber-50 p-4 rounded print:hidden">
-                  <div className="font-semibold text-amber-900 flex items-center gap-2">
-                    <AlertTriangle size={16} /> Notes / Cautions
-                  </div>
-                  <ul className="mt-2 list-disc pl-5 text-xs text-amber-900 space-y-1">
-                    {cautions.map((c, idx) => (
-                      <li key={idx}>{String(c)}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <h3 className="font-bold text-black mb-2">LIABILITIES</h3>
-              <div className="border border-gray-200 rounded">
-                {Array.isArray(data?.balance?.liabilities) &&
-                  data.balance.liabilities.map((l, idx) => (
-                    <div key={idx} className="flex justify-between p-3 border-b border-gray-100 last:border-b-0">
-                      <span>{l.name}</span>
-                      <span className="font-mono font-bold">{formatCurrency(safeNumber(l.value))}</span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            <div>
-              <h3 className="font-bold text-black mb-2">EQUITY</h3>
-              <div className="border border-gray-200 rounded">
-                {Array.isArray(data?.balance?.equity) &&
-                  data.balance.equity.map((e, idx) => (
-                    <div key={idx} className="flex justify-between p-3 border-b border-gray-100 last:border-b-0">
-                      <span>{e.name}</span>
-                      <span className="font-mono font-bold">{formatCurrency(safeNumber(e.value))}</span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* --- RATIOS --- */}
-        {activeTab === 'ratios' && (
-          <div className="space-y-8">
-            <div className="grid grid-cols-2 gap-8">
-              <div className="p-4 border border-gray-200 rounded bg-gray-50">
-                <h4 className="font-bold text-gray-700 uppercase text-xs mb-2">Profitability</h4>
-                <div className="flex justify-between items-center mb-2">
-                  <span>Gross Margin</span>
-                  <span className="font-mono font-bold">{ratios.grossMargin.toFixed(1)}%</span>
-                </div>
-                <div className="flex justify-between items-center">
-                  <span>Net Margin</span>
-                  <span className="font-mono font-bold">{ratios.netMargin.toFixed(1)}%</span>
-                </div>
-              </div>
-
-              <div className="p-4 border border-gray-200 rounded bg-gray-50">
-                <h4 className="font-bold text-gray-700 uppercase text-xs mb-2">Coverage</h4>
-                <div className="flex justify-between items-center mb-2">
-                  <span>DSCR</span>
-                  <span className={`font-mono font-bold ${ratios.dscr >= 1.25 ? 'text-green-600' : 'text-red-600'}`}>
-                    {ratios.dscr.toFixed(2)}x
-                  </span>
-                </div>
-                <p className="text-[10px] text-gray-500 mt-2">Bank target: &gt; 1.25x</p>
-              </div>
-            </div>
-          </div>
-        )}
-      </Card>
     </div>
   );
 }
