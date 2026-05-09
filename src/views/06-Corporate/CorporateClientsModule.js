@@ -1339,7 +1339,7 @@ export default function CorporateClientsModule({ initialSection = 'overview' }) 
     const rows = fulfilments.length ? fulfilments : billingControl.openInvoices || [];
     return (
       <div className="space-y-6">
-        {selectedClient && <SelectedAccountSummary />}
+        {selectedClient && renderSelectedAccountHeader()}
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <SmallMetric label="Invoice value" value={money(selectedBilling.totalInvoiceValue || billingControl?.metrics?.totalInvoiceValue)} hint="Revenue value of corporate deliveries" />
           <SmallMetric label="Outstanding" value={money(selectedBilling.outstanding || billingControl?.metrics?.totalOutstanding)} hint="Unpaid corporate exposure" />
