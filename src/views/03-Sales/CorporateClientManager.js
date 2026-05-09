@@ -15,6 +15,7 @@ import {
   createCorporateFulfilment,
   updateCorporateFulfilmentStatus,
   getRelationshipManagers,
+  createCorporatePortalUser,
 } from '../../api/corporateClientService';
 import {
   AlertTriangle,
@@ -24,6 +25,8 @@ import {
   DollarSign,
   FileText,
   MessageSquare,
+  KeyRound,
+  ShieldCheck,
   PackageCheck,
   PhoneCall,
   RefreshCw,
@@ -59,6 +62,18 @@ const emptyClient = {
   anniversaryDate: '',
   nextFollowUpDate: '',
   notes: '',
+  portalEnabled: false,
+  createPortalUser: false,
+  portalUserName: '',
+  portalUserEmail: '',
+  portalUserPhone: '',
+  portalUserRole: 'corporate_admin',
+  portalPassword: '',
+  billingEmail: '',
+  billingCycle: 'PER_DELIVERY',
+  requiresInternalApproval: false,
+  defaultApprovalMode: 'NONE',
+  defaultCreditHoldPolicy: 'WARN_ONLY',
 };
 
 const emptyFulfilment = {
@@ -100,6 +115,18 @@ const emptyActivity = {
   note: '',
   outcome: '',
   nextFollowUpDate: '',
+};
+
+const emptyPortalUser = {
+  name: '',
+  email: '',
+  phone: '',
+  corporateRole: 'corporate_admin',
+  password: '',
+  jobTitle: '',
+  department: '',
+  mustChangePassword: true,
+  isCorporatePrimaryContact: true,
 };
 
 const num = (v) => Number(v || 0);
@@ -169,6 +196,8 @@ export default function CorporateClientManager() {
   const [clientForm, setClientForm] = useState(emptyClient);
   const [fulfilmentForm, setFulfilmentForm] = useState(emptyFulfilment);
   const [activityForm, setActivityForm] = useState(emptyActivity);
+  const [portalUserForm, setPortalUserForm] = useState(emptyPortalUser);
+  const [lastCredentials, setLastCredentials] = useState(null);
 
   const selectedClient = useMemo(
     () => clients.find((client) => client.id === selectedClientId) || clients[0] || null,
@@ -195,6 +224,13 @@ export default function CorporateClientManager() {
       branchId: client.assignedBranchId || '',
       branchName: client.assignedBranchName || '',
       deliveryAddress: client.address || '',
+    });
+    setPortalUserForm({
+      ...emptyPortalUser,
+      name: client.contactPerson || '',
+      email: client.email || '',
+      phone: client.phone || client.whatsappPhone || '',
+      jobTitle: client.contactRole || '',
     });
   };
 
@@ -265,7 +301,16 @@ export default function CorporateClientManager() {
     try {
       const payload = { ...clientForm };
       const response = payload.id ? await updateCorporateClient(payload.id, payload) : await createCorporateClient(payload);
-      setMessage(payload.id ? 'Corporate client updated.' : 'Corporate client created.');
+      if (response.portalUser?.temporaryPassword || response.portalUser?.user) {
+        setLastCredentials({
+          email: response.portalUser?.user?.email,
+          password: response.portalUser?.temporaryPassword || payload.portalPassword || '(password set manually)',
+          role: response.portalUser?.user?.role,
+        });
+        setMessage('Corporate client created and portal credentials generated. Share the credentials securely with the customer.');
+      } else {
+        setMessage(payload.id ? 'Corporate client updated.' : 'Corporate client created.');
+      }
       const saved = response.client;
       await load();
       if (saved?.id) setSelectedClientId(saved.id);
@@ -281,6 +326,8 @@ export default function CorporateClientManager() {
     setClientForm(emptyClient);
     setFulfilmentForm(emptyFulfilment);
     setActivityForm(emptyActivity);
+    setPortalUserForm(emptyPortalUser);
+    setLastCredentials(null);
   };
 
   const logFulfilment = async () => {
@@ -337,6 +384,31 @@ export default function CorporateClientManager() {
     }
   };
 
+  const createPortalUser = async () => {
+    if (!selectedClient?.id) {
+      setError('Save/select the corporate client before creating portal credentials.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      const response = await createCorporatePortalUser(selectedClient.id, portalUserForm);
+      setLastCredentials({
+        email: response.user?.email,
+        password: response.temporaryPassword || portalUserForm.password || '(password set manually)',
+        role: response.user?.role,
+      });
+      setMessage('Corporate portal user created. Share the login credentials securely with the customer.');
+      setPortalUserForm({ ...emptyPortalUser, corporateRole: 'corporate_requester' });
+      await load();
+    } catch (err) {
+      setError(err.message || 'Unable to create portal user.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const quickStatus = async (fulfilment, status) => {
     setStatusUpdating(fulfilment.id);
     setError('');
@@ -377,6 +449,17 @@ export default function CorporateClientManager() {
 
       {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">{error}</div>}
       {message && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-300">{message}</div>}
+      {lastCredentials && (
+        <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-4 text-sm text-blue-100">
+          <div className="mb-2 flex items-center gap-2 font-bold text-white"><KeyRound size={16} /> Business Portal Credentials</div>
+          <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+            <span>Email: <b>{lastCredentials.email || '—'}</b></span>
+            <span>Password: <b>{lastCredentials.password || '—'}</b></span>
+            <span>Role: <b>{lastCredentials.role || '—'}</b></span>
+          </div>
+          <p className="mt-2 text-xs text-blue-200/80">Share securely with the corporate customer. The user is flagged to change password on first login.</p>
+        </div>
+      )}
 
       <HelpPanel
         title="Corporate client operating guide"
@@ -385,6 +468,7 @@ export default function CorporateClientManager() {
           { label: 'Fulfilment control', text: 'Record requested KG, promised time, actual delivery, truck/van used and service delay reasons for every corporate order.' },
           { label: 'SLA control', text: 'The control tower flags overdue and at-risk orders so relationship managers and dispatch can intervene before customers complain.' },
           { label: 'Finance exposure', text: 'Amount paid, invoice number, payment due date and outstanding balance are tracked as operational references only; GL posting remains untouched.' },
+          { label: 'Portal credentials', text: 'For swift onboarding, create the business account and portal user in BMA, then share the generated credentials with the customer.' },
           { label: 'WhatsApp layer', text: 'Capture WhatsApp phone/contact information now. Later waves can convert WhatsApp requests directly into corporate fulfilments.' },
         ]}
       />
@@ -526,6 +610,11 @@ export default function CorporateClientManager() {
             <label className="text-xs text-slate-400">Phone<input className={inputClass} value={clientForm.phone} onChange={(e) => updateClientField('phone', e.target.value)} /></label>
             <label className="text-xs text-slate-400">WhatsApp phone<input className={inputClass} value={clientForm.whatsappPhone} onChange={(e) => updateClientField('whatsappPhone', e.target.value)} /></label>
             <label className="text-xs text-slate-400">Email<input className={inputClass} value={clientForm.email} onChange={(e) => updateClientField('email', e.target.value)} /></label>
+            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-xs text-slate-300"><input type="checkbox" checked={Boolean(clientForm.portalEnabled)} onChange={(e) => updateClientField('portalEnabled', e.target.checked)} /> Enable business portal</label>
+            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-xs text-slate-300"><input type="checkbox" checked={Boolean(clientForm.createPortalUser)} onChange={(e) => updateClientField('createPortalUser', e.target.checked)} /> Create login now</label>
+            <label className="text-xs text-slate-400">Portal user email<input className={inputClass} value={clientForm.portalUserEmail || clientForm.email || ''} onChange={(e) => updateClientField('portalUserEmail', e.target.value)} placeholder="Used only when creating login now" /></label>
+            <label className="text-xs text-slate-400">Portal user role<select className={inputClass} value={clientForm.portalUserRole || 'corporate_admin'} onChange={(e) => updateClientField('portalUserRole', e.target.value)}>{['corporate_admin','corporate_requester','corporate_approver','corporate_viewer'].map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
+            <label className="text-xs text-slate-400">Temp password<input className={inputClass} value={clientForm.portalPassword || ''} onChange={(e) => updateClientField('portalPassword', e.target.value)} placeholder="Leave blank to auto-generate" /></label>
             <label className="text-xs text-slate-400">Expected monthly KG<input type="number" className={inputClass} value={clientForm.expectedMonthlyKg} onChange={(e) => updateClientField('expectedMonthlyKg', e.target.value)} /></label>
             <label className="text-xs text-slate-400">Agreed ₦/KG<input type="number" className={inputClass} value={clientForm.agreedPricePerKg} onChange={(e) => updateClientField('agreedPricePerKg', e.target.value)} /></label>
             <label className="text-xs text-slate-400">Credit limit<input type="number" className={inputClass} value={clientForm.creditLimit} onChange={(e) => updateClientField('creditLimit', e.target.value)} /></label>
@@ -542,6 +631,23 @@ export default function CorporateClientManager() {
             <Button icon={Save} onClick={saveClient} disabled={saving || !clientForm.companyName}>{saving ? 'Saving…' : 'Save Client'}</Button>
             {clientForm.whatsappPhone && <Pill tone="bg-emerald-500/10 text-emerald-300 border-emerald-500/20"><MessageSquare size={13} className="mr-1" /> WhatsApp ready</Pill>}
             {clientForm.id && <Pill tone="bg-slate-500/10 text-slate-300 border-slate-500/20">Outstanding {money(clientForm.outstandingBalance)}</Pill>}
+          </div>
+        </Card>
+
+        <Card>
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h3 className="text-lg font-bold text-white">Portal Access</h3>
+            <Pill tone={clientForm.portalEnabled ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20' : 'bg-slate-500/10 text-slate-300 border-slate-500/20'}>{clientForm.portalEnabled ? 'ENABLED' : 'OFF'}</Pill>
+          </div>
+          <div className="space-y-3">
+            <p className="rounded-xl border border-white/5 bg-white/5 p-3 text-xs text-slate-400">Create lightweight credentials here after the client account is saved. Corporate customers then login on the Gas2Door Business portal.</p>
+            <label className="text-xs text-slate-400">Name<input className={inputClass} value={portalUserForm.name} onChange={(e) => setPortalUserForm({ ...portalUserForm, name: e.target.value })} /></label>
+            <label className="text-xs text-slate-400">Email<input className={inputClass} value={portalUserForm.email} onChange={(e) => setPortalUserForm({ ...portalUserForm, email: e.target.value })} /></label>
+            <label className="text-xs text-slate-400">Phone<input className={inputClass} value={portalUserForm.phone} onChange={(e) => setPortalUserForm({ ...portalUserForm, phone: e.target.value })} /></label>
+            <label className="text-xs text-slate-400">Role<select className={inputClass} value={portalUserForm.corporateRole} onChange={(e) => setPortalUserForm({ ...portalUserForm, corporateRole: e.target.value })}>{['corporate_admin','corporate_requester','corporate_approver','corporate_viewer'].map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
+            <label className="text-xs text-slate-400">Temporary password<input className={inputClass} value={portalUserForm.password} onChange={(e) => setPortalUserForm({ ...portalUserForm, password: e.target.value })} placeholder="Leave blank to auto-generate" /></label>
+            <label className="flex items-center gap-2 rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-xs text-slate-300"><input type="checkbox" checked={Boolean(portalUserForm.mustChangePassword)} onChange={(e) => setPortalUserForm({ ...portalUserForm, mustChangePassword: e.target.checked })} /> Force password change</label>
+            <Button icon={ShieldCheck} onClick={createPortalUser} disabled={saving || !selectedClient?.id || !portalUserForm.email}>{saving ? 'Creating…' : 'Create Portal User'}</Button>
           </div>
         </Card>
       </div>

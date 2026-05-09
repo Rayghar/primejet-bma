@@ -57,7 +57,16 @@ import CustomerCRMCommandCenter from "./views/03-Sales/CustomerCRMCommandCenter"
 import Customer360 from "./views/03-Sales/Customer360";
 import SupportDesk from "./views/03-Sales/SupportDesk";
 import WhatsAppBusinessLayer from "./views/03-Sales/WhatsAppBusinessLayer";
-import CorporateClientManager from "./views/03-Sales/CorporateClientManager";
+import CorporateClientsModule, {
+  CorporateAccounts,
+  CorporateOnboarding,
+  CorporatePortalAccess,
+  CorporateSites,
+  CorporateRequests,
+  CorporateFulfilmentControl,
+  CorporateBilling,
+  CorporateRelationshipDesk,
+} from "./views/06-Corporate/CorporateClientsModule";
 
 // --- 04. DATA ENTRY (POS & Logs) ---
 import DailyLog from "./views/04-DataEntry/DailyLog";
@@ -163,7 +172,18 @@ ProductPriceBranchConfig,
       Customer360,
       SupportDesk,
       WhatsAppBusinessLayer,
-      CorporateClientManager,
+
+      // Corporate Clients standalone module
+      CorporateClientsModule,
+      CorporateAccounts,
+      CorporateOnboarding,
+      CorporatePortalAccess,
+      CorporateSites,
+      CorporateRequests,
+      CorporateFulfilmentControl,
+      CorporateBilling,
+      CorporateRelationshipDesk,
+      CorporateClientManager: CorporateClientsModule,
 
       // Data Entry
       DailyLog,

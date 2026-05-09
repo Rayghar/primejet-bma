@@ -60,3 +60,20 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+/* Global select readability hardening: avoid white text on white dropdowns. */
+select,
+select.glass-input,
+select option,
+.glass-input option {
+  background-color: #020617 !important;
+  color: #ffffff !important;
+}
+select:focus,
+input:focus,
+textarea:focus {
+  outline: none;
+}
+label span,
+.form-label {
+  color: #cbd5e1;
+}

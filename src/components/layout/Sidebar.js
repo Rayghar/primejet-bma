@@ -5,7 +5,7 @@ import {
     LayoutDashboard, Truck, TrendingUp, Users, ShoppingCart, 
     MessageSquare, Settings, LogOut, ChevronLeft, ChevronRight,
     PieChart, Map, Activity, FileText, Shield, Database, 
-    ClipboardList, DollarSign, Briefcase, UserCheck, RotateCcw, Calculator, History, Bell, Link, SlidersHorizontal, FileArchive, ClipboardCheck, ShieldCheck, Wrench
+    ClipboardList, DollarSign, Briefcase, UserCheck, RotateCcw, Calculator, History, Bell, Link, SlidersHorizontal, FileArchive, ClipboardCheck, ShieldCheck, Wrench, Building2, KeyRound, MapPin, ListChecks, PhoneCall
 } from 'lucide-react';
 
 const MENU_GROUPS = [
@@ -53,15 +53,29 @@ const MENU_GROUPS = [
             { id: 'TaxCompliance', label: 'Tax & VAT', icon: FileText },
         ]
     },
+
+    {
+        title: "Corporate Clients",
+        items: [
+            { id: 'CorporateClientsModule', label: 'Command Overview', icon: Building2, help: 'Dedicated B2B command module for corporate accounts, portal access, sites, requests and fulfilment.' },
+            { id: 'CorporateAccounts', label: 'Accounts', icon: Users, help: 'Create, search, select and administer corporate client accounts.' },
+            { id: 'CorporateOnboarding', label: 'Onboarding', icon: ListChecks, help: 'Step-by-step readiness checklist after BMA-led customer creation.' },
+            { id: 'CorporatePortalAccess', label: 'Portal Access', icon: KeyRound, help: 'Create and manage corporate customer login credentials.' },
+            { id: 'CorporateSites', label: 'Delivery Sites', icon: MapPin, help: 'Maintain corporate delivery locations and branch/site mapping.' },
+            { id: 'CorporateRequests', label: 'Requests Inbox', icon: ClipboardCheck, help: 'Review and convert corporate portal requests.' },
+            { id: 'CorporateFulfilmentControl', label: 'Fulfilment Control', icon: Truck, help: 'Log and update corporate fulfilments and SLA status.' },
+            { id: 'CorporateBilling', label: 'Billing & Credit', icon: DollarSign, help: 'Manage invoices, payment status, statements, overdue exposure and credit control.' },
+            { id: 'CorporateRelationshipDesk', label: 'Relationship Desk', icon: PhoneCall, help: 'Track follow-ups, account notes and customer health.' },
+        ]
+    },
     {
         title: "Sales & CRM",
         items: [
             { id: 'CustomerCRMCommandCenter', label: 'Customer CRM', icon: Users },
-            { id: 'CorporateClientManager', label: 'Corporate Clients', icon: Briefcase, help: 'Manage B2B leads, prospects, onboarding, fulfilment, WhatsApp linkage and relationship ownership.' },
             { id: 'CustomerHub', label: 'Customers & Accounts', icon: Users },
             { id: 'Customer360', label: 'Customer 360', icon: UserCheck },
             { id: 'SalesAnalytics', label: 'Sales Trends', icon: TrendingUp },
-            { id: 'SupportDesk', label: 'Live Chat', icon: MessageSquare },
+            { id: 'SupportDesk', label: 'Support & Chat Desk', icon: MessageSquare, help: 'Unified admin desk for retail support chats, corporate complaints, SLA follow-up and ticket replies.' },
             { id: 'WhatsAppBusinessLayer', label: 'WhatsApp Layer', icon: MessageSquare },
         ]
     },

@@ -2,7 +2,7 @@
 import axios from 'axios';
 
 const runtimeApiUrl = typeof window !== 'undefined' ? window.__PRIMEJET_API_URL__ : undefined;
-const BASE_URL = process.env.REACT_APP_API_URL || runtimeApiUrl || 'https://primejet-backend.onrender.com';//'http://localhost:3000';
+const BASE_URL = process.env.REACT_APP_API_URL || runtimeApiUrl || 'http://localhost:3000';//'https://primejet-backend.onrender.com';
 
 const apiClient = axios.create({
   baseURL: BASE_URL,

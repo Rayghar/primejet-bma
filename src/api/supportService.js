@@ -88,6 +88,28 @@ export const addTicketNote = async (ticketId, text, noteType = 'INTERNAL', optio
   }
 };
 
+
+export const getTicketMessages = async (ticketId, options = {}) => {
+  try {
+    if (!ticketId) throw new Error('ticketId is required');
+    const res = await apiClient.get(`/api/v2/support/tickets/${ticketId}/messages`, options);
+    return res.data;
+  } catch (err) {
+    throwNormalized(err, 'Failed to load ticket messages');
+  }
+};
+
+export const sendTicketMessage = async (ticketId, text, options = {}) => {
+  try {
+    if (!ticketId) throw new Error('ticketId is required');
+    if (!text?.trim()) throw new Error('message text is required');
+    const res = await apiClient.post(`/api/v2/support/tickets/${ticketId}/messages`, { text: text.trim() }, options);
+    return res.data;
+  } catch (err) {
+    throwNormalized(err, 'Failed to send ticket message');
+  }
+};
+
 export const createFailedDeliveryTicket = async (payload, options = {}) => {
   try {
     const res = await apiClient.post('/api/v2/support/tickets/from-failed-delivery', payload, options);
